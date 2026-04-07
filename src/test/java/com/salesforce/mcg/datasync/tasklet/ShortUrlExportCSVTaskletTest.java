@@ -128,12 +128,6 @@ class ShortUrlExportCSVTaskletTest {
                 mock(SftpService.class),
                 mock(JobExecutionHistoryJdbcRepository.class));
 
-        Method resolveEmailSmsValue = ShortUrlExportCSVTasklet.class.getDeclaredMethod(
-                "resolveEmailSmsValue", String.class, String.class, String.class);
-        resolveEmailSmsValue.setAccessible(true);
-        assertThat(resolveEmailSmsValue.invoke(tasklet, "555", null, "555")).isEqualTo("555");
-        assertThat(resolveEmailSmsValue.invoke(tasklet, null, "a@b.com", "a@b.com")).isEqualTo("a@b.com");
-
         Method extractTipoEnvio = ShortUrlExportCSVTasklet.class.getDeclaredMethod("extractTipoEnvio", String.class);
         extractTipoEnvio.setAccessible(true);
         assertThat(extractTipoEnvio.invoke(tasklet, "sms")).isEqualTo("S");

@@ -49,13 +49,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.salesforce.mcg.datasync.config.JobConfig.SHORT_URL_EXPORT_CSV_JOB;
-import static com.salesforce.mcg.datasync.helper.DateFormatterHelper.format;
+
 /**
  * Tasklet that exports Short URL records incrementally to a CSV file on SFTP.
  * <p>
  * Export Format (CSV with comma delimiter):
- * EMAIL_SMS, USERNAME, APIKEY_ACORTADOR, IDSHORTURL, URL, CREATIONDATE,
- * ID_TRANSACCION_MC, TIPO_ENVIO, ID_TRANSACCION_MIL, ID_TRANSACCION_FEC, CLICKS
+ * EMAIL_SMS, USERNAME, APIKEY_ACORTADOR, IDSHORTURL, URL,
+ * ID_TRANSACCION_MC, TIPO_ENVIO, ID_TRANSACCION_DATE, CLICKS, TCODE, COMPANY
  * </p>
  * <p>
  * Export Modes:
@@ -307,12 +307,14 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
      * Format a single ResultSet row as a CSV row with comma delimiter.
      * <p>
      * Columns:
-     * EMAIL_SMS, USERNAME, APIKEY_ACORTADOR, IDSHORTURL, URL, CREATIONDATE,
-     * ID_TRANSACCION_MC, TIPO_ENVIO, ID_TRANSACCION_MIL, ID_TRANSACCION_FEC, CLICKS
+     * EMAIL_SMS, USERNAME, APIKEY_ACORTADOR, IDSHORTURL, URL,
+     * ID_TRANSACCION_MC, TIPO_ENVIO, ID_TRANSACCION_DATE, CLICKS, TCODE, COMPANY
      * </p>
      * Note: EMAIL_SMS, USERNAME, ID_TRANSACCION_MIL, and ID_TRANSACCION_FEC are
      * wrapped in quotes to ensure they are treated as text in CSV/Excel.
+     * {@code email} is read for future EMAIL_SMS resolution (see commented {@code resolveEmailSmsValue}).
      */
+    @SuppressWarnings("unused")
     private String formatCsvRow(ResultSet rs) throws Exception {
         var phoneNumber = rs.getString("phone_number");
         var email = rs.getString("email");
@@ -323,7 +325,6 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
         var messageType = rs.getString("message_type");
         var redirectCount = rs.getInt("redirect_count");
         var transactionDate = rs.getString("transaction_date");
-        var creationDate = rs.getTimestamp("creation_date");
         var transactionId = rs.getString("transaction_id");
         var tcode = rs.getString("tcode");
         var company = rs.getString("company");
@@ -337,7 +338,6 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
                 Objects.requireNonNullElse(apiKey, Strings.EMPTY),
                 Objects.requireNonNullElse(shortUrl, Strings.EMPTY),
                 Objects.requireNonNullElse(originalUrl, Strings.EMPTY),
-                format(creationDate),
                 idTransaccionMc,
                 extractTipoEnvio(messageType),
                 asText(idTransaccionFec),
