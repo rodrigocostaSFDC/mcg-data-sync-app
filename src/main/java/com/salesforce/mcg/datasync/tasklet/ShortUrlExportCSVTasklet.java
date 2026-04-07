@@ -54,8 +54,8 @@ import static com.salesforce.mcg.datasync.config.JobConfig.SHORT_URL_EXPORT_CSV_
  * Tasklet that exports Short URL records incrementally to a CSV file on SFTP.
  * <p>
  * Export Format (CSV with comma delimiter):
- * EMAIL_SMS, USERNAME, APIKEY_ACORTADOR, IDSHORTURL, URL,
- * ID_TRANSACCION_MC, TIPO_ENVIO, ID_TRANSACCION_DATE, CLICKS, TCODE, COMPANY
+ * EMAIL_SMS, USERNAME, APIKEY_ACORTADOR, TCODE, COMPANY, IDSHORTURL, URL,
+ * ID_TRANSACCION_MC, TIPO_ENVIO, ID_TRANSACCION_DATE, CLICKS
  * </p>
  * <p>
  * Export Modes:
@@ -110,14 +110,14 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
             "EMAIL_SMS",
             "USERNAME",
             "APIKEY_ACORTADOR",
+            "TCODE",
+            "COMPANY",
             "IDSHORTURL",
             "URL",
             "ID_TRANSACCION_MC",
             "TIPO_ENVIO",
             "ID_TRANSACCION_DATE",
-            "CLICKS",
-            "TCODE",
-            "COMPANY"
+            "CLICKS"
     );
 
     public static final String SELECT_PREFIX_SQL = """
@@ -307,8 +307,8 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
      * Format a single ResultSet row as a CSV row with comma delimiter.
      * <p>
      * Columns:
-     * EMAIL_SMS, USERNAME, APIKEY_ACORTADOR, IDSHORTURL, URL,
-     * ID_TRANSACCION_MC, TIPO_ENVIO, ID_TRANSACCION_DATE, CLICKS, TCODE, COMPANY
+     * EMAIL_SMS, USERNAME, APIKEY_ACORTADOR, TCODE, COMPANY, IDSHORTURL, URL,
+     * ID_TRANSACCION_MC, TIPO_ENVIO, ID_TRANSACCION_DATE, CLICKS
      * </p>
      * Note: EMAIL_SMS, USERNAME, ID_TRANSACCION_MIL, and ID_TRANSACCION_FEC are
      * wrapped in quotes to ensure they are treated as text in CSV/Excel.
@@ -336,14 +336,14 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
                 asText(mobileNumber),
                 asText(phoneNumber).replaceAll("^52",""),
                 Objects.requireNonNullElse(apiKey, Strings.EMPTY),
+                Objects.requireNonNullElse(tcode, Strings.EMPTY),
+                Objects.requireNonNullElse(company, Strings.EMPTY),
                 Objects.requireNonNullElse(shortUrl, Strings.EMPTY),
                 Objects.requireNonNullElse(originalUrl, Strings.EMPTY),
                 idTransaccionMc,
                 extractTipoEnvio(messageType),
                 asText(idTransaccionFec),
-                String.valueOf(redirectCount),
-                tcode,
-                company
+                String.valueOf(redirectCount)
         );
     }
 
@@ -390,15 +390,27 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
         return value.substring(0, 1).toUpperCase();
     }
 
+    /**
+     * Legacy format: 14 digits then dash and suffix (e.g. {@code 12345678901234-xyz}) → first 14 digits.
+     * ISO dates (e.g. {@code 2026-04-07}) have '-' earlier; return the full trimmed value.
+     * Undelimited strings longer than 14 characters → first 14 characters.
+     */
     private String extractFirst14Digits(String transactionDate) {
         if (transactionDate == null || transactionDate.isEmpty()) {
             return Strings.EMPTY;
         }
-        int dashIndex = transactionDate.indexOf('-');
-        if (dashIndex > 0) {
-            return transactionDate.substring(0, Math.min(dashIndex, 14));
+        String trimmed = transactionDate.trim();
+        int dashIndex = trimmed.indexOf('-');
+        if (dashIndex == 14 && trimmed.length() >= 14) {
+            String prefix = trimmed.substring(0, 14);
+            if (prefix.chars().allMatch(Character::isDigit)) {
+                return prefix;
+            }
         }
-        return transactionDate.length() > 14 ? transactionDate.substring(0, 14) : transactionDate;
+        if (dashIndex < 0 && trimmed.length() > 14) {
+            return trimmed.substring(0, 14);
+        }
+        return trimmed;
     }
     
     /**
