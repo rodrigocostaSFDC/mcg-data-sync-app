@@ -58,20 +58,20 @@ public class Application {
             "series", "subscriberSeriesImportCSVJob",
             "portability", "subscriberPortabilityImportCSVJob");
 
-    /**
-     * Company identifier.
-     */
-    @NotBlank(message = "--company is required")
-    @Pattern(
-            regexp = "^(?i)(telmex|telnor)$",
-            message = "--company must be telmex or telnor"
-    )
-    @CommandLine.Option(
-            names = "--company",
-            required = true,
-            description = "Allowed values: telmex, telnor"
-    )
-    private String company;
+//    /**
+//     * Company identifier.
+//     */
+//    @NotBlank(message = "--company is required")
+//    @Pattern(
+//            regexp = "^(?i)(telmex|telnor)$",
+//            message = "--company must be telmex or telnor"
+//    )
+//    @CommandLine.Option(
+//            names = "--company",
+//            required = true,
+//            description = "Allowed values: telmex, telnor"
+//    )
+//    private String company;
 
     /**
      * Company identifier.

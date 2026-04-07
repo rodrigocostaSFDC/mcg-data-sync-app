@@ -142,7 +142,7 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
     private final JobExecutionHistoryJdbcRepository jobHistRepository;
     private final SftpPropertyContext context;
 
-    @Value("${sftp.data.export-dir:/exports}")
+    @Value("${sftp.data.export-dir:/exports_staging/datasync_qa/}")
     private String exportDirectory;
 
     @Value("${shorturl.export.batch-size:10000}")
@@ -204,8 +204,7 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
                     connection,
                     exportDate,
                     exportDateStart,
-                    exportDateEnd,
-                    exportApiKey);
+                    exportDateEnd);
 
             try (ResultSet rs = statement.executeQuery();
                  PipedOutputStream pipedOut = new PipedOutputStream();
@@ -477,51 +476,45 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
             Connection connection,
             String exportDate,
             String exportDateStart,
-            String exportDateEnd,
-            String exportApiKey) throws Exception {
+            String exportDateEnd) throws Exception {
 
         PreparedStatement statement;
         LocalDateTime dateStart;
         LocalDateTime dateEnd;
 
-        if (Strings.isNotBlank(exportApiKey) && Strings.isNotBlank(exportDate)){
+        if (Strings.isNotBlank(exportDate)){
             log.info("🚀 Exporting Mode: Daily");
             LocalDate date = LocalDate.parse(exportDate, dateFormatter);
             dateStart = date.atStartOfDay();
             dateEnd = date.atTime(23,59,59);
             statement = prepareForwardOnlyReadOnlyStatement(connection, SELECT_PREFIX_SQL + """ 
-                        WHERE api_key = ?
-                         AND
+                        WHERE
                             (creation_date >= ? AND creation_date < ?)
                         OR
                             (last_accessed_date >= ? AND last_accessed_date < ?)
                         ORDER BY creation_date DESC
                         """);
-            statement.setString(1, exportApiKey);
-            statement.setTimestamp(2, Timestamp.valueOf(dateStart));
-            statement.setTimestamp(3, Timestamp.valueOf(dateEnd));
-            statement.setTimestamp(4, Timestamp.valueOf(dateStart));
-            statement.setTimestamp(5, Timestamp.valueOf(dateEnd));
+            statement.setTimestamp(1, Timestamp.valueOf(dateStart));
+            statement.setTimestamp(2, Timestamp.valueOf(dateEnd));
+            statement.setTimestamp(3, Timestamp.valueOf(dateStart));
+            statement.setTimestamp(4, Timestamp.valueOf(dateEnd));
 
-        } else if (Strings.isNotBlank(exportApiKey)
-                && Strings.isNotBlank(exportDateStart)
+        } else if (Strings.isNotBlank(exportDateStart)
                 && Strings.isNotBlank(exportDateEnd)){
             log.info("🚀 Exporting Mode: Range");
             dateStart = LocalDateTime.parse(exportDateStart + " 00:00:00", dateTimeFormatter);
             dateEnd = LocalDateTime.parse(exportDateEnd + " 23:59:59", dateTimeFormatter);
             statement = prepareForwardOnlyReadOnlyStatement(connection, SELECT_PREFIX_SQL + """ 
-                        WHERE api_key = ?
-                        AND
+                        WHERE
                             (creation_date >= ? AND creation_date < ?)
                         OR
                             (last_accessed_date >= ? AND last_accessed_date < ?)
                         ORDER BY creation_date DESC
                         """);
-            statement.setString(1, exportApiKey);
-            statement.setTimestamp(2, Timestamp.valueOf(dateStart));
-            statement.setTimestamp(3, Timestamp.valueOf(dateEnd));
-            statement.setTimestamp(4, Timestamp.valueOf(dateStart));
-            statement.setTimestamp(5, Timestamp.valueOf(dateEnd));
+            statement.setTimestamp(1, Timestamp.valueOf(dateStart));
+            statement.setTimestamp(2, Timestamp.valueOf(dateEnd));
+            statement.setTimestamp(3, Timestamp.valueOf(dateStart));
+            statement.setTimestamp(4, Timestamp.valueOf(dateEnd));
         } else {
             log.info("🚀 Exporting Mode: Since Last Export");
             dateStart = jobHistRepository
