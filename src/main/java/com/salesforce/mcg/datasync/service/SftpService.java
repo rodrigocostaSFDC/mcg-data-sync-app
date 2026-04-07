@@ -135,6 +135,7 @@ public class SftpService {
                 session.connect();
             }
             channelSftp = (ChannelSftp) session.openChannel(Sftp.Channel.SFTP);
+            if (!channelSftp.isConnected()) channelSftp.connect();
             channelSftp.cd(path);
         } catch (SftpException | JSchException e) {
             try {
@@ -156,7 +157,7 @@ public class SftpService {
     public void uploadStreamToSftp(String remotePath, PipedInputStream inputStream, SftpServerProperties props) throws JSchException, SftpException, IOException {
         ChannelSftp channelSftp = null;
         try {
-            if (!session.isConnected()){
+            if (!session.isConnected()) {
                 session.connect();
             }
             channelSftp = (ChannelSftp) session.openChannel(Sftp.Channel.SFTP);
@@ -167,13 +168,14 @@ public class SftpService {
             log.info("📡 Starting streaming upload to: {}", remotePath);
             channelSftp.put(inputStream, remotePath);
             log.info("📡 File uploaded successfully to: {}", remotePath);
+        } catch (Exception e){
+            e.printStackTrace();
         } finally {
             if (channelSftp != null && channelSftp.isConnected()) {
                 channelSftp.disconnect();
             }
         }
     }
-
 
     public String extractDirectory(String path) {
         int lastSlash = path.lastIndexOf('/');

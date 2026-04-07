@@ -143,7 +143,7 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
     private final JobExecutionHistoryJdbcRepository jobHistRepository;
     private final SftpPropertyContext context;
 
-    @Value("${sftp.data.export-dir:/exports_staging/datasync_qa/}")
+    @Value("${sftp.data.export-dir:/exports_staging/datasync_qa}")
     private String exportDirectory;
 
     @Value("${shorturl.export.batch-size:10000}")
