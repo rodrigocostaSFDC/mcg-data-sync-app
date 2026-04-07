@@ -116,14 +116,15 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
             "TIPO_ENVIO",
             "ID_TRANSACCION_DATE",
             "CLICKS",
-            "TCODE"
+            "TCODE",
+            "COMPANY"
     );
 
     public static final String SELECT_PREFIX_SQL = """
         SELECT
             phone_number,
             email,
-            subscriber_key,
+            mobile_number,
             api_key,
             short_url,
             original_url,
@@ -315,7 +316,7 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
     private String formatCsvRow(ResultSet rs) throws Exception {
         var phoneNumber = rs.getString("phone_number");
         var email = rs.getString("email");
-        var subscriberKey = rs.getString("subscriber_key");
+        var mobileNumber = rs.getString("mobile_number");//celular
         var apiKey = rs.getString("api_key");
         var shortUrl = rs.getString("short_url");
         var originalUrl = rs.getString("original_url");
@@ -326,14 +327,13 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
         var transactionId = rs.getString("transaction_id");
         var tcode = rs.getString("tcode");
         var company = rs.getString("company");
-        var emailSmsValue = resolveEmailSmsValue(phoneNumber, email, subscriberKey);
 
         String idTransaccionMc = Objects.requireNonNullElse(transactionId, Strings.EMPTY);
         String idTransaccionFec = extractFirst14Digits(transactionDate);
 
         return String.join(AppConstants.Strings.COMMA,
-                asText(emailSmsValue),
-                asText(emailSmsValue),
+                asText(mobileNumber),
+                asText(phoneNumber).replaceAll("^52",""),
                 Objects.requireNonNullElse(apiKey, Strings.EMPTY),
                 Objects.requireNonNullElse(shortUrl, Strings.EMPTY),
                 Objects.requireNonNullElse(originalUrl, Strings.EMPTY),
@@ -347,36 +347,36 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
         );
     }
 
-    /**
-     * Resolves EMAIL_SMS/USERNAME value for export.
-     * At least one of mobileNumber or email must be present (validated at create time).
-     * When both are present, subscriberKey indicates the channel: if it equals email use email,
-     * if it equals mobileNumber use mobile; otherwise use subscriberKey.
-     */
-    private String resolveEmailSmsValue(String mobileNumber, String email, String subscriberKey) {
-        /* -- Adjust content -- */
-        var subscriberKeyAdj = Objects.requireNonNullElse(subscriberKey, Strings.EMPTY).trim();
-        var emailAdj = Objects.requireNonNullElse(email, Strings.EMPTY).trim();
-        var mobileNumberAdj = Objects.requireNonNullElse(mobileNumber, Strings.EMPTY).trim();
-
-        boolean hasMobileNumber = Strings.isNotBlank(mobileNumberAdj);
-        boolean hasEmail = Strings.isNotBlank(emailAdj);
-
-        if (hasMobileNumber && hasEmail) {
-            if (subscriberKeyAdj.equalsIgnoreCase(emailAdj)) {
-                return emailAdj;
-            }
-            if (subscriberKeyAdj.equals(mobileNumberAdj)) {
-                return mobileNumberAdj;
-            }
-            return Objects.nonNull(subscriberKey) ? subscriberKeyAdj : Strings.EMPTY;
-        }
-
-        if (hasMobileNumber) return mobileNumberAdj;
-        if (hasEmail) return emailAdj;
-
-        return AppConstants.Strings.EMPTY;
-    }
+//    /**
+//     * Resolves EMAIL_SMS/USERNAME value for export.
+//     * At least one of mobileNumber or email must be present (validated at create time).
+//     * When both are present, subscriberKey indicates the channel: if it equals email use email,
+//     * if it equals mobileNumber use mobile; otherwise use subscriberKey.
+//     */
+//    private String resolveEmailSmsValue(String mobileNumber, String email, String subscriberKey) {
+//        /* -- Adjust content -- */
+//        var subscriberKeyAdj = Objects.requireNonNullElse(subscriberKey, Strings.EMPTY).trim();
+//        var emailAdj = Objects.requireNonNullElse(email, Strings.EMPTY).trim();
+//        var mobileNumberAdj = Objects.requireNonNullElse(mobileNumber, Strings.EMPTY).trim();
+//
+//        boolean hasMobileNumber = Strings.isNotBlank(mobileNumberAdj);
+//        boolean hasEmail = Strings.isNotBlank(emailAdj);
+//
+//        if (hasMobileNumber && hasEmail) {
+//            if (subscriberKeyAdj.equalsIgnoreCase(emailAdj)) {
+//                return emailAdj;
+//            }
+//            if (subscriberKeyAdj.equals(mobileNumberAdj)) {
+//                return mobileNumberAdj;
+//            }
+//            return Objects.nonNull(subscriberKey) ? subscriberKeyAdj : Strings.EMPTY;
+//        }
+//
+//        if (hasMobileNumber) return mobileNumberAdj;
+//        if (hasEmail) return emailAdj;
+//
+//        return AppConstants.Strings.EMPTY;
+//    }
     
     /**
      * Extract TIPO_ENVIO: first character of message_type
@@ -559,16 +559,5 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
     private String sanitizeApiKeyForFilename(String apiKey) {
         return Objects.requireNonNullElse(apiKey, "").replaceAll("[^a-zA-Z0-9_-]", "_");
     }
-
-//    private String getExportDirectory() {
-//        String herokuAppName = System.getenv("HEROKU_APP_NAME");
-//        if (herokuAppName == null || herokuAppName.isBlank()) {
-//            return STAGING_EXPORT_DIR;
-//        }
-//        if (PROD_APP_NAME.equals(herokuAppName)) {
-//            return PROD_EXPORT_DIR;
-//        }
-//        return STAGING_EXPORT_DIR;
-//    }
 
 }
