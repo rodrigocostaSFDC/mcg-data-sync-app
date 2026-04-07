@@ -15,7 +15,7 @@
 
 package com.salesforce.mcg.datasync.repository;
 
-import com.salesforce.mcg.datasync.model.DataSyncConfig;
+import com.salesforce.mcg.datasync.data.DataSyncConfig;
 
 import java.util.Optional;
 
