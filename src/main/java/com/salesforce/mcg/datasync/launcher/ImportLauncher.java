@@ -17,7 +17,8 @@ package com.salesforce.mcg.datasync.launcher;
 
 import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.SftpException;
-import com.salesforce.mcg.datasync.service.SFTPService;
+import com.salesforce.mcg.datasync.data.FileDiscoveryResult;
+import com.salesforce.mcg.datasync.service.SftpService;
 import com.salesforce.mcg.datasync.util.SftpPropertyContext;
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
@@ -33,12 +34,15 @@ import org.springframework.batch.core.repository.JobRestartException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 
 /**
  * Application Runner implementation that lists data files from a remote SFTP directory
@@ -50,82 +54,70 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(value = "app.mode", havingValue = "import")
 @Slf4j
-public class SyncLauncher implements ApplicationRunner {
+public class ImportLauncher implements ApplicationRunner {
 
     @Resource(name = "dataSyncSftpService")
-    private SFTPService sftpService;
+    private SftpService sftpService;
 
     @Resource
     private SftpPropertyContext propertyContext;
+
+    @Resource
+    private Map<Pattern, Job> jobResolverMap;
 
     @Value("${app.auto-shutdown:true}")
     private boolean autoShutdown;
 
     private final ApplicationContext applicationContext;
+
     private final JobLauncher jobLauncher;
     
     private final AtomicInteger jobsProcessed = new AtomicInteger(0);
     private final AtomicInteger jobsSuccessful = new AtomicInteger(0);
     private final AtomicInteger jobsFailed = new AtomicInteger(0);
 
-    // Date range parameters for Short URL Export (Mode 3)
-    private String exportDateStart;
-    private String exportDateEnd;
-
-    // Campaign filter for Short URL Export (Mode 4: CAMPAIGN_DAY)
-    private String exportApiKey;
-
     @Override
     public void run(ApplicationArguments args) {
 
-        log.info("🚀 Application starting...");
+        log.info("🚀 Starting Import Jobs...");
 
-        // Check if a specific job is requested via command line argument
-        String requestedJob = null;
-        if (args.containsOption("job")) {
-            List<String> jobValues = args.getOptionValues("job");
-            if (jobValues != null && !jobValues.isEmpty()) {
-                requestedJob = jobValues.get(0);
-                log.info("Specific job requested: {}", requestedJob);
+        var props = propertyContext.getPropertiesForActiveCompany();
+        var subfolderPath = props.outputDir();
+
+        log.info("🔍 Discovering files in subfolder: {}", subfolderPath);
+        try {
+
+            List<String> files = sftpService.listFiles(subfolderPath);
+            if (files.isEmpty()){
+                log.warn("⚠️ Folder is empty!");
+                return;
             }
-        }
-        
-        // Parse date range parameters for Short URL Export (Mode 3)
-        // Usage: --exportDate=2024-12-05 (single day) or --exportDateStart=2024-12-01 --exportDateEnd=2024-12-05 (range)
-        if (args.containsOption("exportDate")) {
-            List<String> dateValues = args.getOptionValues("exportDate");
-            if (dateValues != null && !dateValues.isEmpty()) {
-                exportDateStart = dateValues.get(0);
-                exportDateEnd = exportDateStart; // Single day
-                log.info("Export date specified (single day): {}", exportDateStart);
-            }
-        } else if (args.containsOption("exportDateStart")) {
-            List<String> startValues = args.getOptionValues("exportDateStart");
-            if (startValues != null && !startValues.isEmpty()) {
-                exportDateStart = startValues.get(0);
-            }
-            if (args.containsOption("exportDateEnd")) {
-                List<String> endValues = args.getOptionValues("exportDateEnd");
-                if (endValues != null && !endValues.isEmpty()) {
-                    exportDateEnd = endValues.get(0);
+
+            for (String file : files) {
+                var jobs = jobResolverMap.keySet().stream()
+                        .filter(pattern -> pattern.matcher(file).matches())
+                        .map(pattern -> jobResolverMap.get(pattern))
+                        .toList();
+                if (jobs.isEmpty()){
+                    log.warn("⚠️ No processors found for file named '{}' and will not be processed.",
+                            file);
+                } else {
+                    log.info("✅️ Processor '{}' found for file named '{}'. Adding to processing Queue,",
+                            jobs.get(0).getName(),
+                            file);
                 }
             }
-            log.info("Export date range specified: {} to {}", exportDateStart, 
-                    exportDateEnd != null ? exportDateEnd : exportDateStart);
+            //All files added to execution queue.
+            //Starting the first
+            //Register to be notified when finished
+
+        } catch (JSchException | SftpException e) {
+            log.error("❌ Unable to read files from remove server. Error: {}",
+                    e.getMessage());
+            throw new RuntimeException(e);
         }
-        
-        // Parse campaign api_key filter for Short URL Export (Mode 4)
-        // Usage: --exportApiKey=my_api_key --exportDate=2026-03-19
-        if (args.containsOption("exportApiKey")) {
-            List<String> apiKeyValues = args.getOptionValues("exportApiKey");
-            if (apiKeyValues != null && !apiKeyValues.isEmpty()) {
-                exportApiKey = apiKeyValues.get(0);
-                log.info("Export campaign api_key filter specified: {}", exportApiKey);
-            }
-        }
-        
-        execute(requestedJob);
     }
 
     /**
@@ -199,39 +191,32 @@ public class SyncLauncher implements ApplicationRunner {
     public void execute(String requestedJob) {
         int totalFiles = 0;
         try {
-            // Validate requested job if specified
-            if (requestedJob != null && !isValidJobName(requestedJob)) {
-                log.error("Invalid job name: {}. Valid values are: operator, sheet, series, portability, shorturlexport", requestedJob);
-                shutdownApplication(1);
-                return;
-            }
-            
-            if (requestedJob != null) {
-                log.info("Running only job: {}", requestedJob);
-            } else {
-                log.info("Running all jobs (no specific job requested)");
-            }
+
+            var props = propertyContext.getPropertiesForActiveCompany();
+            var subfolderPath = props.outputDir();
+
+            String portabilityFile = null;
+            String seriesFile = null;
+            String operatorFile = null;
+            List<String> sheetFiles = new ArrayList<>();
+
             
             // Discover files from SFTP
             FileDiscoveryResult discoveryResult = discoverFiles();
-            totalFiles = discoveryResult.getTotalFileCount();
-            
-            // Get files from discovery result
-            String operatorFile = discoveryResult.getOperatorFile();
-            List<String> sheetFiles = discoveryResult.getSheetFiles();
-            String seriesFile = discoveryResult.getSeriesFile();
-            String portabilityFile = discoveryResult.getPortabilityFile();
-            
-            log.info("Files found - Operator: {}, Sheets: {}, Series: {}, Portability: {}", 
-                    operatorFile != null ? "yes" : "no", 
-                    sheetFiles.size(),
-                    seriesFile != null ? "yes" : "no",
-                    portabilityFile != null ? "yes" : "no");
-            
-            // 1. Short URL Export (runs first, no file dependency)
-            if (shouldRunJob(requestedJob, "shorturlexport")) {
-                runShortUrlExportJob();
-            }
+//            totalFiles = discoveryResult.getTotalFileCount();
+//
+//            // Get files from discovery result
+//            String operatorFile = discoveryResult.getOperatorFile();
+//            List<String> sheetFiles = discoveryResult.getSheetFiles();
+//            String seriesFile = discoveryResult.getSeriesFile();
+//            String portabilityFile = discoveryResult.getPortabilityFile();
+//
+//            log.info("ℹ️ Files found - Operator: {}, Sheets: {}, Series: {}, Portability: {}",
+//                    operatorFile != null ? "yes" : "no",
+//                    sheetFiles.size(),
+//                    seriesFile != null ? "yes" : "no",
+//                    portabilityFile != null ? "yes" : "no");
+
             
             // 2. Process operator file
             if (shouldRunJob(requestedJob, "operator") && operatorFile != null) {
@@ -239,14 +224,14 @@ public class SyncLauncher implements ApplicationRunner {
                     Job job = applicationContext.getBean("operatorJobBean", Job.class);
                     launchBatchJob(operatorFile, job);
                     jobsSuccessful.incrementAndGet();
-                    log.info("Successfully completed operator job for file: {}", operatorFile);
+                    log.info("🏁 Successfully completed operator job for file: {}", operatorFile);
                 } catch (Exception jobEx) {
                     jobsFailed.incrementAndGet();
-                    log.error("Operator job failed for file: {}", operatorFile, jobEx);
+                    log.error("❌ Operator job failed for file: {}", operatorFile, jobEx);
                 }
                 jobsProcessed.incrementAndGet();
             } else if (requestedJob != null && "operator".equalsIgnoreCase(requestedJob)) {
-                log.warn("Operator job requested but no operator file found");
+                log.warn("❌ Operator job requested but no operator file found");
             }
             
             // 3. Process sheet files (from parent folder)
@@ -304,12 +289,12 @@ public class SyncLauncher implements ApplicationRunner {
             shutdownApplication(1);
             throw new RuntimeException(e);
         } catch (JSchException e) {
-            log.error("SFTP connection error: {}", e.getMessage());
+            log.error("❌ SFTP connection error: {}", e.getMessage());
             shutdownApplication(1);
             throw new RuntimeException(e);
         } finally {
             // Log final statistics
-            log.info("Job execution completed. Total files: {}, Processed: {}, Successful: {}, Failed: {}", 
+            log.info("🏁Job execution completed. Total files: {}, Processed: {}, Successful: {}, Failed: {}",
                     totalFiles, jobsProcessed.get(), jobsSuccessful.get(), jobsFailed.get());
             
             // Shutdown the application if auto-shutdown is enabled
@@ -326,17 +311,17 @@ public class SyncLauncher implements ApplicationRunner {
      * @param exitCode the exit code (0 for success, non-zero for failure)
      */
     private void shutdownApplication(int exitCode) {
-        log.info("Initiating application shutdown with exit code: {}", exitCode);
+        log.info("🚀 Initiating application shutdown with exit code: {}", exitCode);
         
         // Schedule shutdown in a separate thread to allow current operations to complete
         new Thread(() -> {
             try {
                 Thread.sleep(2000); // Give 2 seconds for logging to complete
-                log.info("Shutting down dyno now...");
+                log.info("🔌 Shutting down dyno now...");
                 System.exit(exitCode);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                log.warn("Shutdown interrupted");
+                log.warn("⚠️ Shutdown interrupted");
                 System.exit(exitCode);
             }
         }, "shutdown-thread").start();
@@ -361,7 +346,7 @@ public class SyncLauncher implements ApplicationRunner {
         List<String> sheetFiles = new ArrayList<>();
         
         // Discover operator, series, portability from subfolder
-        log.info("Discovering files in subfolder: {}", subfolderPath);
+        log.info("🔍 Discovering files in subfolder: {}", subfolderPath);
         try {
             List<String> files = sftpService.listFiles(subfolderPath);
             for (String fileName : files) {
@@ -370,23 +355,23 @@ public class SyncLauncher implements ApplicationRunner {
                 
                 if (filenameLower.contains("fin_portados")) {
                     portabilityFile = fullPath;
-                    log.debug("Found portability file: {}", fileName);
+                    log.debug("🔍 Found portability file: {}", fileName);
                 } else if (filenameLower.contains("fin_series")) {
                     seriesFile = fullPath;
-                    log.debug("Found series file: {}", fileName);
+                    log.debug("🔍Found series file: {}", fileName);
                 } else if (filenameLower.contains("fin_operador")) {
                     operatorFile = fullPath;
-                    log.debug("Found operator file: {}", fileName);
+                    log.debug("🔍 Found operator file: {}", fileName);
                 } else {
-                    log.debug("Unrecognized file in subfolder: {}", fileName);
+                    log.debug("⚠️ Unrecognized file in subfolder: {}", fileName);
                 }
             }
         } catch (SftpException e) {
-            log.warn("Subfolder {} not accessible: {}", subfolderPath, e.getMessage());
+            log.warn("⚠️ Subfolder {} not accessible: {}", subfolderPath, e.getMessage());
         }
         
         // Discover sheet files from parent folder
-        log.info("Discovering sheet files in parent folder: {}", props.inputDir());
+        log.info("🔍Discovering sheet files in parent folder: {}", props.inputDir());
         try {
             List<String> files = sftpService.listFiles(props.inputDir());
             for (String fileName : files) {
@@ -408,9 +393,7 @@ public class SyncLauncher implements ApplicationRunner {
                 .sheetFiles(sheetFiles)
                 .build();
     }
-    
-    
-    
+
     /**
      * Determines if a specific job should be executed based on the requested job name.
      * 
@@ -441,58 +424,9 @@ public class SyncLauncher implements ApplicationRunner {
         return normalizedName.equals("operator") || 
                normalizedName.equals("sheet") || 
                normalizedName.equals("series") || 
-               normalizedName.equals("portability") ||
-               normalizedName.equals("shorturlexport");
+               normalizedName.equals("portability");
     }
-    
-    /**
-     * Runs the Short URL Export job (no file dependency).
-     * Exports short URL records to CSV on SFTP.
-     * 
-     * Supports four modes:
-     * - Mode 1 (default): Export records created since last export
-     * - Mode 2: Export records created OR updated since last export (EXPORT_UPDATES=true)
-     * - Mode 3: Export records for a specific date range (--exportDate or --exportDateStart/--exportDateEnd)
-     * - Mode 4: Export records for a specific campaign on a specific day (--exportApiKey + --exportDate)
-     */
-    private void runShortUrlExportJob() {
-        log.info("Starting Short URL Export job...");
-        
-        try {
-            Job job = applicationContext.getBean("shortUrlExportCSVJob", Job.class);
-            
-            JobParametersBuilder paramsBuilder = new JobParametersBuilder()
-                    .addLong("timestamp", System.currentTimeMillis())
-                    .addString("jobType", "shorturlexport");
-            
-            // Add date range parameters if specified (Mode 3 or Mode 4)
-            if (exportDateStart != null && !exportDateStart.isBlank()) {
-                paramsBuilder.addString("exportDateStart", exportDateStart);
-                if (exportDateEnd != null && !exportDateEnd.isBlank()) {
-                    paramsBuilder.addString("exportDateEnd", exportDateEnd);
-                }
-                log.info("Short URL Export: Using date range ({} to {})", 
-                        exportDateStart, exportDateEnd != null ? exportDateEnd : exportDateStart);
-            }
-            
-            // Add campaign api_key filter if specified (Mode 4)
-            if (exportApiKey != null && !exportApiKey.isBlank()) {
-                paramsBuilder.addString("exportApiKey", exportApiKey);
-                log.info("Short URL Export: Filtering by api_key={}", exportApiKey);
-            }
-            
-            jobLauncher.run(job, paramsBuilder.toJobParameters());
-            
-            jobsProcessed.incrementAndGet();
-            jobsSuccessful.incrementAndGet();
-            log.info("Successfully completed Short URL Export job");
-            
-        } catch (Exception jobEx) {
-            jobsFailed.incrementAndGet();
-            jobsProcessed.incrementAndGet();
-            log.error("Short URL Export job failed", jobEx);
-        }
-    }
+
 
 }
 

@@ -1,9 +1,11 @@
-package com.salesforce.mcg.preprocessor.util;
+package com.salesforce.mcg.datasync.util;
 
-import com.salesforce.mcg.preprocessor.properties.SftpPreprocessorProperties;
-import com.salesforce.mcg.preprocessor.properties.SftpServerProperties;
+import com.salesforce.mcg.datasync.properties.SftpPreprocessorProperties;
+import com.salesforce.mcg.datasync.properties.SftpServerProperties;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+
+import static com.salesforce.mcg.datasync.common.AppConstants.Company;
 
 @Service
 public class SftpPropertyContext {
@@ -18,11 +20,8 @@ public class SftpPropertyContext {
         this.company = company;
     }
 
-
-
-
     public SftpServerProperties getPropertiesForActiveCompany(){
-        return "telmex".equals(company) ?
+        return Company.TELMEX.equals(company) ?
                     properties.telmex(): properties.telnor();
     }
 }

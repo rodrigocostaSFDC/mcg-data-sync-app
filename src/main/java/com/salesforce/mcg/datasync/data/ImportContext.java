@@ -1,4 +1,4 @@
-package com.salesforce.mcg.datasync.newbatch.data;
+package com.salesforce.mcg.datasync.data;
 
 import java.util.concurrent.atomic.AtomicLong;
 

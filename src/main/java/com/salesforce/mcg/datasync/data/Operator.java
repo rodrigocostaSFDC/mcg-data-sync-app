@@ -13,7 +13,7 @@
  * possibility of such damage.
  ****************************************************************************/
 
-package com.salesforce.mcg.datasync.newbatch.data;
+package com.salesforce.mcg.datasync.data;
 
 /**
  * Represents an Operator entity with various account and operator-related details.

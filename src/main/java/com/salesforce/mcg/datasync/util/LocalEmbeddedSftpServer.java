@@ -1,7 +1,6 @@
-package com.salesforce.mcg.datasync.service;
+package com.salesforce.mcg.datasync.util;
 
 import com.salesforce.mcg.datasync.properties.SftpPreprocessorProperties;
-import com.salesforce.mcg.datasync.util.SftpPropertyContext;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.sshd.common.file.virtualfs.VirtualFileSystemFactory;
 import org.apache.sshd.server.SshServer;

@@ -18,129 +18,125 @@ package com.salesforce.mcg.datasync.config;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.Session;
+import com.salesforce.mcg.datasync.properties.SftpPreprocessorProperties;
+import com.salesforce.mcg.datasync.util.LocalEmbeddedSftpServer;
+import com.salesforce.mcg.datasync.util.SftpPropertyContext;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.logging.log4j.util.Strings;
 import org.springframework.beans.factory.BeanCreationException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 import org.springframework.integration.sftp.session.DefaultSftpSessionFactory;
 import org.springframework.integration.sftp.session.SftpRemoteFileTemplate;
 
 import java.util.Properties;
+import static com.salesforce.mcg.datasync.common.AppConstants.*;
 
 @Configuration
 @ConditionalOnClass(JSch.class)
-@EnableConfigurationProperties(SftpProperties.class)
+@EnableConfigurationProperties(SftpPreprocessorProperties.class)
 @Slf4j
-public class SftpConfig {
+public class SftpClientConfig {
+
+    @Value("${sftp.mode}") private String sftpMode;
+    @Value("${sftp.prod.out-dir}") String prodOutDir;
+    @Value("${sftp.staging.out-dir}") String stagingOutDir;
+    @Value("${sftp.default.out-dir}") String defaultOutDir;
+
+    @ConditionalOnProperty(name = Sftp.Mode.MODE, havingValue = Sftp.Mode.LOCAL)
+    @Bean JSch jSchLocal(
+            SftpPropertyContext context,
+            LocalEmbeddedSftpServer sftpServer) throws JSchException {
+
+        var props = context.getPropertiesForActiveCompany();
+        var jsch = new JSch();
+        var session = jsch.getSession(props.username(), props.host(), props.port());
+        session.setPassword(props.password());
+        var config = new Properties();
+        config.put(Sftp.StrictHost.HOST_KEY_CHECKING, Sftp.StrictHost.NO);
+        session.setConfig(config);
+        session.connect();
+        return jsch;
+    }
 
     @Bean
-    public JSch jsch(SftpProperties props) throws JSchException {
-        JSch jsch = new JSch();
-        // known_hosts for StrictHostKeyChecking=yes
-        if (props.getKnownHosts() != null && !props.getKnownHosts().isBlank()) {
-            jsch.setKnownHosts(props.getKnownHosts());
+    @ConditionalOnProperty(name = Sftp.Mode.MODE, havingValue = Sftp.Mode.REMOTE, matchIfMissing = true)
+    public JSch jschRemote(SftpPropertyContext context) throws JSchException {
+        var props = context.getPropertiesForActiveCompany();
+        var jsch = new JSch();
+        if (Strings.isNotBlank(props.knownHosts())) {
+            jsch.setKnownHosts(props.knownHosts());
         }
-        // private key (optional)
-        if (props.getPrivateKey() != null && !props.getPrivateKey().isBlank()) {
-            if (props.getPassphrase() != null && !props.getPassphrase().isBlank()) {
-                jsch.addIdentity(props.getPrivateKey(), props.getPassphrase());
+        if (Strings.isNotBlank(props.privateKey())) {
+            if (props.passphrase() != null && !props.passphrase().isBlank()) {
+                jsch.addIdentity(props.privateKey(), props.passphrase());
             } else {
-                jsch.addIdentity(props.getPrivateKey());
+                jsch.addIdentity(props.privateKey());
             }
         }
         return jsch;
     }
 
-    /**
-     * Connected session bean for non-local profiles. Will be disconnected automatically on shutdown.
-     */
     @Bean(destroyMethod = "disconnect")
-    @Profile("!local")
-    public Session sftpSession(JSch jsch, SftpProperties props) {
+    public Session sftpSession(JSch jsch, SftpPropertyContext context) {
         try {
-            Session session = jsch.getSession(props.getUsername(), props.getHost(), props.getPort());
-
-            // Password only if not using key
-            if ((props.getPrivateKey() == null || props.getPrivateKey().isBlank())
-                    && props.getPassword() != null) {
-                session.setPassword(props.getPassword());
-            }
-
-            Properties cfg = new Properties();
-            cfg.put("StrictHostKeyChecking", "no");
-            cfg.put("PreferredAuthentications", "publickey,password,keyboard-interactive");
-            session.setConfig(cfg);
-
-            session.setServerAliveInterval(20_000);
-            session.setServerAliveCountMax(3);
-            session.setTimeout(30_000);     // read timeout
-            session.connect(15_000);        // TCP connect timeout
-
-            return session;
+            return buildAndConnectSession(jsch, context);
         } catch (JSchException e) {
-            throw new BeanCreationException("Failed to create session", e);
+            throw new BeanCreationException("❌ Failed to create SFTP session", e);
         }
     }
 
-    /**
-     * For local profile, retry connection to allow SFTP server startup time.
-     */
-    @Bean(name = "sftpSession")
-    @Profile("local")
-    public Session sftpSessionLocal(JSch jsch, SftpProperties props) {
-        // For local profile, retry connection to allow SFTP server startup time
-        for (int attempt = 1; attempt <= 5; attempt++) {
-            try {
-                Session session = jsch.getSession(props.getUsername(), props.getHost(), props.getPort());
-                if ((props.getPrivateKey() == null || props.getPrivateKey().isBlank())
-                        && props.getPassword() != null) {
-                    session.setPassword(props.getPassword());
-                }
-                Properties cfg = new Properties();
-                cfg.put("StrictHostKeyChecking", "no");
-                cfg.put("PreferredAuthentications", "publickey,password,keyboard-interactive");
-                session.setConfig(cfg);
-                session.setServerAliveInterval(20_000);
-                session.setServerAliveCountMax(3);
-                session.setTimeout(30_000);
-                session.connect(15_000);
-                log.info("✅ SFTP session connected successfully on attempt {}", attempt);
-                return session;
-            } catch (JSchException e) {
-                log.warn("SFTP connection attempt {} failed: {}", attempt, e.getMessage());
-                if (attempt < 5) {
-                    try {
-                        Thread.sleep(2000); // Wait 2 seconds before retry
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new BeanCreationException("Failed to create session, interrupted while waiting for retry", e);
-                    }
-                } else {
-                    throw new BeanCreationException("Failed to create session after " + attempt + " attempts", e);
-                }
-            }
+    @Bean
+    public DefaultSftpSessionFactory sftpSessionFactory(SftpPropertyContext context) throws JSchException {
+        var props = context.getPropertiesForActiveCompany();
+        var factory = new DefaultSftpSessionFactory(true);
+        factory.setHost(props.host());
+        factory.setPort(props.port());
+        factory.setUser(props.username());
+        factory.setPassword(props.password());
+        factory.setAllowUnknownKeys(props.allowUnknownKeys());
+        factory.setTimeout(props.setTimeout());
+        return factory;
+    }
+
+    @Bean("outDir")
+    public String getOutDir(@Value("${APP_NAME:}")String appName){
+        return switch (appName) {
+            case "mcg-data-sync-app" -> prodOutDir;
+            case "mcg-data-sync-app-staging" -> stagingOutDir;
+            default -> defaultOutDir;
+        };
+    }
+
+    @Bean
+    public SftpRemoteFileTemplate sftpRemoteFileTemplate(DefaultSftpSessionFactory factory) {
+        return new SftpRemoteFileTemplate(factory);
+    }
+
+    private Session buildAndConnectSession(JSch jsch, SftpPropertyContext context) throws JSchException {
+        var preferredAuthentications = Sftp.Mode.LOCAL.equals(sftpMode) ?
+                Sftp.PreferredAuth.LOCAL : Sftp.PreferredAuth.REMOTE;
+        var props = context.getPropertiesForActiveCompany();
+        var session = jsch.getSession(props.username(), props.host(), props.port());
+        session.setPassword(props.password());
+        if ((props.privateKey() == null || props.privateKey().isBlank())
+                && props.passphrase() != null) {
+            session.setPassword(props.password());
         }
-        throw new BeanCreationException("Failed to create session after multiple retries");
+        var cfg = new Properties();
+        var strictHostKey = !props.allowUnknownKeys();
+        cfg.put(Sftp.StrictHost.HOST_KEY_CHECKING, strictHostKey ? Sftp.StrictHost.YES : Sftp.StrictHost.NO);
+        cfg.put(Sftp.PreferredAuth.PREFERRED_AUTHENTICATIONS, preferredAuthentications);
+        session.setConfig(cfg);
+        session.setServerAliveInterval(props.serverAliveInterval());
+        session.setServerAliveCountMax(props.setServerAliveCountMax());
+        session.setTimeout(props.setTimeout());
+        return session;
     }
 
-    @Bean
-    DefaultSftpSessionFactory sftpSessionFactory(SftpProperties props) {
-        var f = new DefaultSftpSessionFactory(true);
-        f.setHost(props.getHost());
-        f.setPort(props.getPort());
-        f.setUser(props.getUsername());
-        f.setPassword(props.getPassword());
-        f.setTimeout(30_000);
-        f.setAllowUnknownKeys(true);
-        return f;
-    }
-
-    @Bean
-    SftpRemoteFileTemplate sftpRemoteFileTemplate(DefaultSftpSessionFactory sf) {
-        return new SftpRemoteFileTemplate(sf);
-    }
 }
 

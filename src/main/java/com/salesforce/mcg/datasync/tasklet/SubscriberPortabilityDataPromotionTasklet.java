@@ -13,7 +13,7 @@
  * possibility of such damage.
  ****************************************************************************/
 
-package com.salesforce.mcg.datasync.newbatch.tasklet;
+package com.salesforce.mcg.datasync.tasklet;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;

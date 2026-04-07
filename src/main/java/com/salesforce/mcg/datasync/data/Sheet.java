@@ -13,7 +13,7 @@
  * possibility of such damage.
  ****************************************************************************/
 
-package com.salesforce.mcg.datasync.newbatch.data;
+package com.salesforce.mcg.datasync.data;
 
 /**
  * Represents an SMS template configuration for a specific company and provider.

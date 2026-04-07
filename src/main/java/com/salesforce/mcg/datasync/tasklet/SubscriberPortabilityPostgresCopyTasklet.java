@@ -13,12 +13,14 @@
  * possibility of such damage.
  ****************************************************************************/
 
- package com.salesforce.mcg.datasync.newbatch.tasklet;
+package com.salesforce.mcg.datasync.tasklet;
 
 import com.jcraft.jsch.ChannelSftp;
 import com.jcraft.jsch.Session;
 import com.opencsv.CSVReader;
 import com.opencsv.exceptions.CsvValidationException;
+import com.salesforce.mcg.datasync.aspect.TrackElapsed;
+import com.salesforce.mcg.datasync.common.AppConstants;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +40,8 @@ import java.sql.Statement;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.GZIPInputStream;
 
+import static com.salesforce.mcg.datasync.common.AppConstants.*;
+
 /**
  * High-performance tasklet that streams subscriber portability data directly from SFTP
  * to a PostgreSQL staging table using the COPY command.
@@ -53,26 +57,27 @@ import java.util.zip.GZIPInputStream;
 @RequiredArgsConstructor
 public class SubscriberPortabilityPostgresCopyTasklet implements Tasklet {
 
+    public static class Columns {
+        public static final String TELEFONO_PORTADO = "TELEFONO_PORTADO";
+        public static final String OPERADOR = "OPERADOR";
+        public static final String FECHA_ALTA = "FECHA_ALTA";
+        public static final String FECHA_BAJA = "FECHA_BAJA";
+    }
 
-    public static final String SFTP = "sftp";
-    public static final String TELEFONO_PORTADO = "TELEFONO_PORTADO";
-    public static final String OPERADOR = "OPERADOR";
-    public static final String FECHA_ALTA = "FECHA_ALTA";
-    public static final String FECHA_BAJA = "FECHA_BAJA";
-    public static final String GZ = ".gz";
     private final DataSource dataSource;
     private final Session sftpSession;
 
-   @Override
-   public RepeatStatus execute(@NonNull StepContribution contribution, @NonNull ChunkContext chunkContext) throws Exception {
+    @TrackElapsed
+    @Override
+    public RepeatStatus execute(@NonNull StepContribution contribution, @NonNull ChunkContext chunkContext) throws Exception {
 
-       String[] files = chunkContext.getStepContext().getJobParameters().get("fileName").toString().split(",");
+        String[] files = chunkContext.getStepContext().getJobParameters().get("fileName").toString().split(",");
 
         log.info("🚀 Starting optimized PostgreSQL COPY import for {} files: {}", files.length, String.join(", ", files));
 
-       AtomicLong totalLinesRead = new AtomicLong(0);
-       AtomicLong recordsForCopy = new AtomicLong(0);
-       AtomicLong skippedRecords = new AtomicLong(0);
+        AtomicLong totalLinesRead = new AtomicLong(0);
+        AtomicLong recordsForCopy = new AtomicLong(0);
+        AtomicLong skippedRecords = new AtomicLong(0);
 
         long startTime = System.currentTimeMillis();
 
@@ -87,8 +92,8 @@ public class SubscriberPortabilityPostgresCopyTasklet implements Tasklet {
             var pgConnection = connection.unwrap(BaseConnection.class);
             var copyManager = new CopyManager(pgConnection);
 
-           var copySQL = "COPY datasync_sch.subscriber_portability_staging " +
-                          "(phone_number, operator) FROM STDIN WITH (FORMAT CSV)";
+            var copySQL = "COPY datasync_sch.subscriber_portability_staging " +
+                    "(phone_number, operator) FROM STDIN WITH (FORMAT CSV)";
 
             // Use Piped streams to connect the data processing thread to the COPY thread
             var pipedInput = new PipedInputStream(1024 * 1024); // 1MB buffer
@@ -110,12 +115,19 @@ public class SubscriberPortabilityPostgresCopyTasklet implements Tasklet {
 
 
             // Main thread: read from SFTP, process, and write to the PipedOutputStream
-            try (PrintWriter writer = new PrintWriter(new OutputStreamWriter(pipedOutput, StandardCharsets.UTF_8))) {
-                var sftp = (ChannelSftp) sftpSession.openChannel(SFTP);
+            try (PrintWriter writer = new PrintWriter(
+                    new OutputStreamWriter(pipedOutput, StandardCharsets.UTF_8))) {
+                var sftp = (ChannelSftp) sftpSession.openChannel(Sftp.Channel.SFTP);
                 sftp.connect();
 
                 for (String fileName : files) {
-                    processFile(fileName.trim(), sftp, writer, totalLinesRead, recordsForCopy, skippedRecords);
+                    processFile(
+                            fileName.trim(),
+                            sftp,
+                            writer,
+                            totalLinesRead,
+                            recordsForCopy,
+                            skippedRecords);
                 }
 
                 if (sftp.isConnected()) {
@@ -134,38 +146,38 @@ public class SubscriberPortabilityPostgresCopyTasklet implements Tasklet {
             throw e; // Fail the job
         }
 
-       long durationSeconds = (System.currentTimeMillis() - startTime) / 1000;
-       log.info("ℹ️ Optimized import process finished in {} seconds (~{} minutes).", durationSeconds, durationSeconds / 60);
-       log.info("ℹ️ Summary: Total Lines Read={}, Records for COPY={}, Records Skipped={}",
-               totalLinesRead.get(), recordsForCopy.get(), skippedRecords.get());
+        long durationSeconds = (System.currentTimeMillis() - startTime) / 1000;
+        log.info("ℹ️ Optimized import process finished in {} seconds (~{} minutes).", durationSeconds, durationSeconds / 60);
+        log.info("ℹ️ Summary: Total Lines Read={}, Records for COPY={}, Records Skipped={}",
+                totalLinesRead.get(), recordsForCopy.get(), skippedRecords.get());
 
-       // Update step contribution with statistics efficiently
-       try {
-           // Use reflection to set the counts directly for better performance
-           java.lang.reflect.Field readCountField = contribution.getClass().getDeclaredField("readCount");
-           readCountField.setAccessible(true);
-           readCountField.set(contribution, totalLinesRead.get());
+        // Update step contribution with statistics efficiently
+        try {
+            // Use reflection to set the counts directly for better performance
+            java.lang.reflect.Field readCountField = contribution.getClass().getDeclaredField("readCount");
+            readCountField.setAccessible(true);
+            readCountField.set(contribution, totalLinesRead.get());
 
-           java.lang.reflect.Field writeCountField = contribution.getClass().getDeclaredField("writeCount");
-           writeCountField.setAccessible(true);
-           writeCountField.set(contribution, recordsForCopy.get());
+            java.lang.reflect.Field writeCountField = contribution.getClass().getDeclaredField("writeCount");
+            writeCountField.setAccessible(true);
+            writeCountField.set(contribution, recordsForCopy.get());
 
-           java.lang.reflect.Field processSkipCountField = contribution.getClass().getDeclaredField("processSkipCount");
-           processSkipCountField.setAccessible(true);
-           processSkipCountField.set(contribution, skippedRecords.get());
+            java.lang.reflect.Field processSkipCountField = contribution.getClass().getDeclaredField("processSkipCount");
+            processSkipCountField.setAccessible(true);
+            processSkipCountField.set(contribution, skippedRecords.get());
 
-           log.info("Updated Spring Batch statistics: Read={}, Write={}, ProcessSkip={}",
-                   totalLinesRead.get(), recordsForCopy.get(), skippedRecords.get());
+            log.info("Updated Spring Batch statistics: Read={}, Write={}, ProcessSkip={}",
+                    totalLinesRead.get(), recordsForCopy.get(), skippedRecords.get());
 
-       } catch (Exception reflectionError) {
-           log.warn("Could not update Spring Batch statistics via reflection: {}", reflectionError.getMessage());
-           // Fallback to increment methods (less efficient but functional)
-           contribution.incrementWriteCount(recordsForCopy.get());
-           log.info("Fallback statistics update: Write={}, Actual Read={}, ProcessSkip={}",
-                   recordsForCopy.get(), totalLinesRead.get(), skippedRecords.get());
-       }
+        } catch (Exception reflectionError) {
+            log.warn("Could not update Spring Batch statistics via reflection: {}", reflectionError.getMessage());
+            // Fallback to increment methods (less efficient but functional)
+            contribution.incrementWriteCount(recordsForCopy.get());
+            log.info("Fallback statistics update: Write={}, Actual Read={}, ProcessSkip={}",
+                    recordsForCopy.get(), totalLinesRead.get(), skippedRecords.get());
+        }
 
-       return RepeatStatus.FINISHED;
+        return RepeatStatus.FINISHED;
     }
 
     private void processFile(String fileName, ChannelSftp sftp, PrintWriter writer, AtomicLong totalLinesRead, AtomicLong recordsForCopy, AtomicLong skippedRecords) throws Exception {
@@ -173,7 +185,7 @@ public class SubscriberPortabilityPostgresCopyTasklet implements Tasklet {
         long fileLines = 0;
 
         try (InputStream sftpStream = sftp.get(fileName);
-             InputStream decompressedStream = fileName.toLowerCase().endsWith(GZ) ? new GZIPInputStream(sftpStream) : sftpStream;
+             InputStream decompressedStream = fileName.toLowerCase().endsWith(AppConstants.File.Extensions.GZ) ? new GZIPInputStream(sftpStream) : sftpStream;
              Reader streamReader = new InputStreamReader(decompressedStream, StandardCharsets.UTF_8);
              CSVReader csvReader = new CSVReader(streamReader)) {
 
@@ -184,10 +196,10 @@ public class SubscriberPortabilityPostgresCopyTasklet implements Tasklet {
             }
 
             // Find column indices once
-            int phoneIndex = findColumnIndex(headers, TELEFONO_PORTADO);
-            int operatorIndex = findColumnIndex(headers, OPERADOR);
-            int startIndex = findColumnIndex(headers, FECHA_ALTA);
-            int endIndex = findColumnIndex(headers, FECHA_BAJA);
+            int phoneIndex = findColumnIndex(headers, Columns.TELEFONO_PORTADO);
+            int operatorIndex = findColumnIndex(headers, Columns.OPERADOR);
+            int startIndex = findColumnIndex(headers, Columns.FECHA_ALTA);
+            int endIndex = findColumnIndex(headers, Columns.FECHA_BAJA);
 
             String[] line;
             while ((line = csvReader.readNext()) != null) {
@@ -213,37 +225,37 @@ public class SubscriberPortabilityPostgresCopyTasklet implements Tasklet {
         log.info("🏁 Finished processing file: {}. Total lines in file: {}", fileName, fileLines);
     }
 
-   /**
-    * Processes a single line from the CSV file.
-    * Returns a formatted CSV string for the COPY command or null if the record should be skipped.
-    */
-   private String processLine(String[] values, int phoneIdx, int operatorIdx, int startIdx, int endIdx) {
-       // Core business rule: must have start date and no end date
-       String portabilityStartStr = values[startIdx];
-       String portabilityEndStr = values[endIdx];
+    /**
+     * Processes a single line from the CSV file.
+     * Returns a formatted CSV string for the COPY command or null if the record should be skipped.
+     */
+    private String processLine(String[] values, int phoneIdx, int operatorIdx, int startIdx, int endIdx) {
+        // Core business rule: must have start date and no end date
+        String portabilityStartStr = values[startIdx];
+        String portabilityEndStr = values[endIdx];
 
-       // Skip if no start date or has end date
-       if (portabilityStartStr == null || portabilityStartStr.trim().isEmpty() ||
-           (portabilityEndStr != null && !portabilityEndStr.trim().isEmpty())) {
-           return null;
-       }
+        // Skip if no start date or has end date
+        if (portabilityStartStr == null || portabilityStartStr.trim().isEmpty() ||
+                (portabilityEndStr != null && !portabilityEndStr.trim().isEmpty())) {
+            return null;
+        }
 
-       String phoneNumberStr = values[phoneIdx];
-       String operatorStr = values[operatorIdx];
+        String phoneNumberStr = values[phoneIdx];
+        String operatorStr = values[operatorIdx];
 
-       // Skip if required fields are missing
-       if (phoneNumberStr == null || phoneNumberStr.trim().isEmpty() ||
-           operatorStr == null || operatorStr.trim().isEmpty()) {
-           return null;
-       }
+        // Skip if required fields are missing
+        if (phoneNumberStr == null || phoneNumberStr.trim().isEmpty() ||
+                operatorStr == null || operatorStr.trim().isEmpty()) {
+            return null;
+        }
 
-       // Simple format: phone_number,operator
-       // Only include phone number and operator - start date is used for filtering only
-       return String.format("52%s,%s",
-               phoneNumberStr.trim(),
-               escapeCsvValue(operatorStr.trim())
-       );
-   }
+        // Simple format: phone_number,operator
+        // Only include phone number and operator - start date is used for filtering only
+        return String.format("52%s,%s",
+                phoneNumberStr.trim(),
+                escapeCsvValue(operatorStr.trim())
+        );
+    }
 
 
     /**
@@ -255,7 +267,7 @@ public class SubscriberPortabilityPostgresCopyTasklet implements Tasklet {
                 return i;
             }
         }
-        throw new IllegalArgumentException("Required header column not found: " + columnName);
+        throw new IllegalArgumentException("❌ Required header column not found: " + columnName);
     }
 
     /**
@@ -263,11 +275,16 @@ public class SubscriberPortabilityPostgresCopyTasklet implements Tasklet {
      * Handles commas, quotes, and newlines.
      */
     private String escapeCsvValue(String value) {
-        if (value == null) return "";
+        if (value == null) return Strings.EMPTY;
         // If the value contains a comma, double-quote, or newline, it must be enclosed in double-quotes.
         // Any existing double-quotes within the value must be escaped by doubling them (e.g., " becomes "").
-        if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
-            return "\"" + value.replace("\"", "\"\"") + "\"";
+        if (value.contains(Strings.COMMA)
+                || value.contains(Strings.DOUBLE_QUOTE)
+                || value.contains(Strings.NEW_LINE)) {
+            return "%s%s%s".formatted(
+                    Strings.DOUBLE_QUOTE,
+                    value.replace(Strings.DOUBLE_QUOTE, "\"\""),
+                    Strings.DOUBLE_QUOTE);
         }
         return value;
     }

@@ -1,4 +1,4 @@
-package com.salesforce.mcg.preprocessor.aspect;
+package com.salesforce.mcg.datasync.aspect;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

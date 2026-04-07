@@ -1,5 +1,6 @@
 package com.salesforce.mcg.datasync.launcher;
 
+import com.salesforce.mcg.datasync.data.FileDiscoveryResult;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

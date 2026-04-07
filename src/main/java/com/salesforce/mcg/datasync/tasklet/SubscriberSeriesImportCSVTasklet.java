@@ -13,11 +13,11 @@
  * possibility of such damage.
  ****************************************************************************/
 
-package com.salesforce.mcg.datasync.newbatch.tasklet;
+package com.salesforce.mcg.datasync.tasklet;
 
-import com.salesforce.mcg.datasync.newbatch.data.SubscriberSeries;
+import com.salesforce.mcg.datasync.common.AppConstants.*;
+import com.salesforce.mcg.datasync.data.SubscriberSeries;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.logging.log4j.util.Strings;
 import org.springframework.stereotype.Component;
 
 import java.sql.PreparedStatement;
@@ -35,7 +35,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Component
 public class SubscriberSeriesImportCSVTasklet extends AbstractImportCSVTasklet<SubscriberSeries> {
 
-    public static final String SPACE = "\\s";
     public static final String AREA = "AREA";
     public static final String SERIE_INICIAL = "SERIE_INICIAL";
     public static final String SERIE_FINAL = "SERIE_FINAL";
@@ -54,7 +53,10 @@ public class SubscriberSeriesImportCSVTasklet extends AbstractImportCSVTasklet<S
             String line,
             long lineNumber,
             Map<String, Integer> columnMap) throws Exception {
-        String[] v = line.replaceAll(SPACE, Strings.EMPTY).split(COMMA, -1);
+
+        String[] v = line
+                .replaceAll(Strings.SPACE, Strings.EMPTY)
+                .split(COMMA, -1);
 
         // Get column indexes dynamically based on header names
         Integer areaIndex = columnMap.get(AREA);
@@ -119,7 +121,7 @@ public class SubscriberSeriesImportCSVTasklet extends AbstractImportCSVTasklet<S
         // Get idx and virtual operator from CSV, with fallback defaults
         String idx = "";
         String virtualOperator = "";
-        if (virtualOperatorIndex != null && virtualOperatorIndex < v.length) {
+        if (virtualOperatorIndex != null) {
             String idxValue = v[virtualOperatorIndex].trim();
             if (!idxValue.isEmpty()) {
                 idx = idxValue;
@@ -128,14 +130,12 @@ public class SubscriberSeriesImportCSVTasklet extends AbstractImportCSVTasklet<S
         } else {
             log.debug("IDX column not found or out of bounds. Index: {}, Array length: {}", virtualOperatorIndex, v.length);
         }
-        
 
-        return SubscriberSeries.builder()
-                .seriesStart(seriesStart)
-                .seriesEnd(seriesEnd)
-                .operator(operator)
-                .virtualOperator(virtualOperator)
-                .build();
+        return new SubscriberSeries(
+                seriesStart,
+                seriesEnd,
+                operator,
+                virtualOperator);
     }
 
     @Override
@@ -154,10 +154,10 @@ public class SubscriberSeriesImportCSVTasklet extends AbstractImportCSVTasklet<S
             PreparedStatement ps,
             AtomicInteger batchSize) throws SQLException {
         if (Objects.nonNull(series)) {
-            ps.setLong(1, series.getSeriesStart());
-            ps.setLong(2, series.getSeriesEnd());
-            ps.setString(3, series.getOperator());
-            ps.setString(4, series.getVirtualOperator());
+            ps.setLong(1, series.seriesStart());
+            ps.setLong(2, series.seriesEnd());
+            ps.setString(3, series.operator());
+            ps.setString(4, series.virtualOperator());
             ps.addBatch();
             batchSize.incrementAndGet();
         }

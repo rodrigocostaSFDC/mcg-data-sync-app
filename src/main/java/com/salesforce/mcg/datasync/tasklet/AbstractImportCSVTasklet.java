@@ -1,9 +1,9 @@
-package com.salesforce.mcg.datasync.newbatch.tasklet;
+package com.salesforce.mcg.datasync.tasklet;
 
 
 import com.jcraft.jsch.ChannelSftp;
 import com.jcraft.jsch.Session;
-import com.salesforce.mcg.datasync.newbatch.data.ImportContext;
+import com.salesforce.mcg.datasync.data.ImportContext;
 import com.salesforce.mcg.datasync.util.SftpPropertyContext;
 import jakarta.annotation.Resource;
 import lombok.NonNull;
@@ -12,7 +12,6 @@ import org.springframework.batch.core.StepContribution;
 import org.springframework.batch.core.scope.context.ChunkContext;
 import org.springframework.batch.core.step.tasklet.Tasklet;
 import org.springframework.batch.repeat.RepeatStatus;
-import org.springframework.beans.factory.annotation.Value;
 
 import javax.sql.DataSource;
 import java.io.BufferedReader;

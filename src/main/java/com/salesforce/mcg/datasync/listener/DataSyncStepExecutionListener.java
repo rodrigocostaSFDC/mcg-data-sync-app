@@ -13,7 +13,7 @@
  * possibility of such damage.
  ***************************************************************************/
 
-package com.salesforce.mcg.datasync.common;
+package com.salesforce.mcg.datasync.listener;
 
 import com.jcraft.jsch.ChannelSftp;
 import com.jcraft.jsch.Session;
@@ -27,6 +27,8 @@ import org.springframework.batch.core.StepExecutionListener;
 
 import java.util.ArrayList;
 import java.util.List;
+
+import static com.salesforce.mcg.datasync.common.AppConstants.Sftp;
 
 /**
  * Step execution and skip event listener for batch processing subscriber portability imports.
@@ -77,7 +79,7 @@ public class DataSyncStepExecutionListener implements StepExecutionListener {
             if (shouldMoveRemoteFile(stepExecution) && config.getMoveAfterCopy()) {
                 var remoteSrc = stepExecution.getJobParameters().getString("AA");
                 var remoteDst = String.format("%s/%s_%s", config.getMovePath(), remoteSrc, System.currentTimeMillis());
-                var sftp = (ChannelSftp) session.openChannel("sftp");
+                var sftp = (ChannelSftp) session.openChannel(Sftp.Channel.SFTP);
                 sftp.connect();
                 sftp.rename(remoteSrc, remoteDst);
                 sftp.disconnect();

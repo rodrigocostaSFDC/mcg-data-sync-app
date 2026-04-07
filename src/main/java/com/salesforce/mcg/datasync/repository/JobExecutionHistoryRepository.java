@@ -13,43 +13,21 @@
  * possibility of such damage.
  ****************************************************************************/
 
-package com.salesforce.mcg.datasync.data;
+package com.salesforce.mcg.datasync.repository;
 
-import lombok.*;
+import java.time.LocalDateTime;
+import java.util.Optional;
 
 /**
- * Represents the application configuration model storing scheduler cron expressions
- * and cleanup retention time settings.
- *
- * @author Rodrigo Costa (rodrigo.costa@salesforce.com)
- * @since 2024-06-09
+ * Repository for reading Spring Batch execution history.
  */
-@Data
-@Builder
-@ToString
-@NoArgsConstructor
-@AllArgsConstructor
-public class DataSyncConfig {
+public interface JobExecutionHistoryRepository {
 
     /**
-     * Cron expression for the synchronization scheduler.
+     * Returns the latest successful execution end time for the given Spring Batch job name.
+     *
+     * @param jobName value from {@code BATCH_JOB_INSTANCE.JOB_NAME}
+     * @return latest successful execution time if any, otherwise empty
      */
-    private String syncSchedulerCronExpression;
-
-    /**
-     * Cron expression for the cleanup scheduler.
-     */
-    private String cleanUpSchedulerCronExpression;
-
-    /**
-     * Retention time in days for cleanup operations.
-     */
-    private Integer cleanUpRetentionTimeInDays;
-
-    private Boolean moveAfterCopy;
-
-    private String movePath;
-
-    private Integer keepLastFileQuantity;
+    Optional<LocalDateTime> findLastSuccessfulExecutionTime(String jobName);
 }
-

@@ -13,23 +13,24 @@
  * possibility of such damage.
  *****************************************************************************/
 
-package com.salesforce.mcg.datasync.newbatch.config;
+package com.salesforce.mcg.datasync.config;
 
-import com.salesforce.mcg.datasync.batch.shorturlexport.ShortUrlExportCSVTasklet;
-import com.salesforce.mcg.datasync.newbatch.tasklet.*;
-import com.salesforce.mcg.datasync.util.SftpPropertyContext;
+import com.salesforce.mcg.datasync.tasklet.ShortUrlExportCSVTasklet;
+import com.salesforce.mcg.datasync.tasklet.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
-import org.springframework.batch.core.StepExecutionListener;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
+
+import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Configuration class for Operator batch job.
@@ -57,6 +58,18 @@ public class JobConfig {
     public static final String SUBSCRIBER_PORTABILITY_CLEANUP_STEP = "subscriber-portability-data-cleanup-step";
 
     public static final String SUBSCRIBER_PORTABILITY_PREPARE_JOB = "subscriber-portability-export-csv-job";
+
+    private static final Pattern PORTABILITY_PATTERN = Pattern
+                    .compile("(?i).*fin_portados.*");
+
+    private static final Pattern SERIES_PATTERN = Pattern
+            .compile("(?i).*fin_series.*");
+
+    private static final Pattern OPERATOR_PATTERN = Pattern
+            .compile("(?i).*fin_operador.*");
+
+    private static final Pattern SHEET_PATTERN = Pattern
+            .compile("(?i).*catalogo_plantillas_sms.*");
 
     private final JobRepository jobRepository;
     private final PlatformTransactionManager transactionManager;
@@ -107,8 +120,8 @@ public class JobConfig {
     /**
      * Main job that processes subscriber portability data efficiently
      */
-    @Bean(name = "subscriberPortabilityJobBean")
-    public Job subscriberPortabilityJob(
+    @Bean(name = "subscriberPortabilityImportCSVJob")
+    public Job subscriberPortabilityImportCSVJob(
             SubscriberPortabilityPrepareStagingTasklet prepareTasklet,
             SubscriberPortabilityPostgresCopyTasklet copyTasklet,
             SubscriberPortabilityDataPromotionTasklet promotionTasklet,
@@ -178,6 +191,19 @@ public class JobConfig {
         return new JobBuilder(SHORT_URL_EXPORT_CSV_JOB, jobRepository)
                 .start(step)
                 .build();
+    }
+
+    @Bean(name = "jobResolverMap")
+    public Map<Pattern, Job> jobResolverMap(
+            @Qualifier("sheetImportCSVJob") Job sheetImportCSVJob,
+            @Qualifier("operatorImportCSVJob") Job operatorImportCSVJob,
+            @Qualifier("subscriberSeriesImportCSVJob") Job subscriberSeriesImportCSVJob,
+            @Qualifier("subscriberPortabilityImportCSVJob") Job subscriberPortabilityImportCSVJob){
+            return Map.of(
+                    SHEET_PATTERN, sheetImportCSVJob,
+                    OPERATOR_PATTERN, operatorImportCSVJob,
+                    SERIES_PATTERN, subscriberSeriesImportCSVJob,
+                    PORTABILITY_PATTERN, subscriberPortabilityImportCSVJob);
     }
 
 }

@@ -1,4 +1,4 @@
-package com.salesforce.mcg.datasync.newbatch.tasklet;
+package com.salesforce.mcg.datasync.tasklet;
 
 import lombok.AllArgsConstructor;
 import lombok.NonNull;

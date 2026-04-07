@@ -13,9 +13,9 @@
  * possibility of such damage.
  *****************************************************************************/
 
-package com.salesforce.mcg.datasync.newbatch.tasklet;
+package com.salesforce.mcg.datasync.tasklet;
 
-import com.salesforce.mcg.datasync.newbatch.data.Operator;
+import com.salesforce.mcg.datasync.data.Operator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 

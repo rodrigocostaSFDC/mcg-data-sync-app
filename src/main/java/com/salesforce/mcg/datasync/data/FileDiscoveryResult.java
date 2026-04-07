@@ -13,7 +13,7 @@
  * possibility of such damage.
  ****************************************************************************/
 
-package com.salesforce.mcg.datasync.launcher;
+package com.salesforce.mcg.datasync.data;
 
 import lombok.Builder;
 import lombok.Getter;

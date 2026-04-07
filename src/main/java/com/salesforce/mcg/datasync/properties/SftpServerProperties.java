@@ -1,4 +1,7 @@
-package com.salesforce.mcg.preprocessor.properties;
+package com.salesforce.mcg.datasync.properties;
+
+import jakarta.validation.constraints.NotBlank;
+import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
  * Sftp Server properties
@@ -18,15 +21,19 @@ package com.salesforce.mcg.preprocessor.properties;
  * @param filePattern patterns files must match to be processed
  */
 public record SftpServerProperties(
-            String company,
-            String host,
-            int port,
-            String username,
-            String password,
-            String privateKey,
-            String passphrase,
-            String knownHosts,
-            boolean allowUnknownKeys,
-            String inputDir,
-            String outputDir,
-            String filePattern){}
+        @NotBlank String company,
+        @NotBlank String host,
+        @DefaultValue("25") int port,
+        @NotBlank String username,
+        @NotBlank String password,
+        @NotBlank String privateKey,
+        @NotBlank String passphrase,
+        @NotBlank String knownHosts,
+        @DefaultValue("false") boolean allowUnknownKeys,
+        @DefaultValue("/") String inputDir,
+        @DefaultValue("/") String outputDir,
+        @DefaultValue("_S_") String filePattern,
+        @DefaultValue("20000") int serverAliveInterval,
+        @DefaultValue("3") int setServerAliveCountMax,
+        @DefaultValue("30000") int setTimeout
+){}
