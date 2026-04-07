@@ -76,8 +76,9 @@ public class SftpService {
      * Delete a temporary file on SFTP
      */
     public void deleteFile(String filePath) {
-        var dir = extractDirectory(filePath);
-        var fileName = extractFileName(filePath);
+        String path = normalizeRemotePath(filePath);
+        var dir = extractDirectory(path);
+        var fileName = extractFileName(path);
         ChannelSftp channelSftp = null;
         try {
             if (!session.isConnected()){
@@ -98,7 +99,12 @@ public class SftpService {
     }
 
     /**
-     * Rename a file on SFTP
+     * Rename a file on SFTP using full remote paths.
+     * <p>
+     * Using {@link ChannelSftp#rename(String, String)} with absolute paths avoids relying on the
+     * channel's current working directory matching where {@link #uploadStreamToSftp} wrote the file,
+     * which otherwise can cause SSH_FX_NO_SUCH_FILE after upload.
+     * </p>
      */
     public void renameFileOnSftp(String oldPath, String newPath) throws JSchException, SftpException {
         ChannelSftp channelSftp = null;
@@ -109,14 +115,11 @@ public class SftpService {
             channelSftp = (ChannelSftp) session.openChannel(Sftp.Channel.SFTP);
             channelSftp.connect();
 
-            String directory = extractDirectory(oldPath);
-            String oldFileName = extractFileName(oldPath);
-            String newFileName = extractFileName(newPath);
+            String from = normalizeRemotePath(oldPath);
+            String to = normalizeRemotePath(newPath);
+            channelSftp.rename(from, to);
 
-            channelSftp.cd(directory);
-            channelSftp.rename(oldFileName, newFileName);
-
-            log.info("✅ Renamed file on SFTP: {} ➡️ {}", oldFileName, newFileName);
+            log.info("✅ Renamed file on SFTP: {} ➡️ {}", from, to);
 
         } finally {
             if (channelSftp != null && channelSftp.isConnected()) {
@@ -163,13 +166,12 @@ public class SftpService {
             channelSftp = (ChannelSftp) session.openChannel(Sftp.Channel.SFTP);
             channelSftp.connect();
             log.info("📡 Connected to SFTP server: {}", props.host());
-            var directory = extractDirectory(remotePath);
+            String normalizedPath = normalizeRemotePath(remotePath);
+            var directory = extractDirectory(normalizedPath);
             ensureDirectoryExists(directory);
-            log.info("📡 Starting streaming upload to: {}", remotePath);
-            channelSftp.put(inputStream, remotePath);
-            log.info("📡 File uploaded successfully to: {}", remotePath);
-        } catch (Exception e){
-            e.printStackTrace();
+            log.info("📡 Starting streaming upload to: {}", normalizedPath);
+            channelSftp.put(inputStream, normalizedPath);
+            log.info("📡 File uploaded successfully to: {}", normalizedPath);
         } finally {
             if (channelSftp != null && channelSftp.isConnected()) {
                 channelSftp.disconnect();
@@ -185,6 +187,21 @@ public class SftpService {
     public String extractFileName(String path) {
         int lastSlash = path.lastIndexOf('/');
         return lastSlash > 0 ? path.substring(lastSlash + 1) : path;
+    }
+
+    /**
+     * Collapses repeated slashes and trims trailing slashes (except root "/") so upload and rename
+     * use the same path the server resolves after {@link ChannelSftp#put}.
+     */
+    static String normalizeRemotePath(String path) {
+        if (path == null || path.isEmpty()) {
+            return path;
+        }
+        String p = path.trim().replaceAll("/+", "/");
+        while (p.length() > 1 && p.endsWith("/")) {
+            p = p.substring(0, p.length() - 1);
+        }
+        return p;
     }
 
 }
