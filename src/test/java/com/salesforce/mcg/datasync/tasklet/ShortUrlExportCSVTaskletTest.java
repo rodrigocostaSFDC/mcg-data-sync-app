@@ -1,9 +1,12 @@
 package com.salesforce.mcg.datasync.tasklet;
 
+import com.salesforce.mcg.datasync.aspect.TimezoneContext;
 import com.salesforce.mcg.datasync.properties.SftpServerProperties;
 import com.salesforce.mcg.datasync.repository.impl.JobExecutionHistoryJdbcRepository;
 import com.salesforce.mcg.datasync.service.SftpService;
 import com.salesforce.mcg.datasync.util.SftpPropertyContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.JobParameters;
 import org.springframework.batch.core.JobParametersBuilder;
@@ -21,7 +24,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Timestamp;
-import java.time.LocalDateTime;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,6 +42,18 @@ import static org.mockito.Mockito.when;
 
 class ShortUrlExportCSVTaskletTest {
 
+    private static final ZoneId MEXICO_ZONE = ZoneId.of("America/Mexico_City");
+
+    @BeforeEach
+    void setUpTimezone() {
+        TimezoneContext.set(MEXICO_ZONE);
+    }
+
+    @AfterEach
+    void clearTimezone() {
+        TimezoneContext.clear();
+    }
+
     @Test
     void execute_shouldExportAndRenameCampaignFile() throws Exception {
         DataSource dataSource = mock(DataSource.class);
@@ -46,8 +63,6 @@ class ShortUrlExportCSVTaskletTest {
         SftpServerProperties serverProperties = mock(SftpServerProperties.class);
 
         when(context.getPropertiesForActiveCompany()).thenReturn(serverProperties);
-        when(historyRepository.findLastSuccessfulExecutionTime(anyString()))
-                .thenReturn(Optional.of(LocalDateTime.of(2026, 4, 1, 0, 0)));
 
         ShortUrlExportCSVTasklet tasklet = new ShortUrlExportCSVTasklet(
                 dataSource, context, sftpService, historyRepository);
@@ -161,12 +176,65 @@ class ShortUrlExportCSVTaskletTest {
         Method resolveFinalFileName = ShortUrlExportCSVTasklet.class.getDeclaredMethod(
                 "resolveFinalFileName", String.class, String.class, String.class, String.class, String.class);
         resolveFinalFileName.setAccessible(true);
-        assertThat(resolveFinalFileName.invoke(tasklet, "camp", "2026-04-01", null, null, "20000101_000000"))
+        assertThat(resolveFinalFileName.invoke(tasklet, "camp", "2026-04-01", null, null, "2026-04-08"))
                 .isEqualTo("shorturl_campaign_camp_20260401.csv");
-        assertThat(resolveFinalFileName.invoke(tasklet, null, null, "2026-04-01", "2026-04-05", "20000101_000000"))
+        assertThat(resolveFinalFileName.invoke(tasklet, null, null, "2026-04-01", "2026-04-05", "2026-04-08"))
                 .isEqualTo("shorturl_daterange_20260401_to_20260405.csv");
-        assertThat(resolveFinalFileName.invoke(tasklet, null, null, null, null, "20000101_000000"))
-                .isEqualTo("shorturl_export_20000101_000000.csv");
+        String previousDay = LocalDate.now(ZoneId.of("America/Mexico_City"))
+                .minusDays(1)
+                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        assertThat(resolveFinalFileName.invoke(tasklet, null, null, null, null, previousDay))
+                .isEqualTo("shorturl_export_" + previousDay + ".csv");
+    }
+
+    @Test
+    void execute_defaultMode_shouldExportPreviousDay() throws Exception {
+        DataSource dataSource = mock(DataSource.class);
+        SftpPropertyContext context = mock(SftpPropertyContext.class);
+        SftpService sftpService = mock(SftpService.class);
+        JobExecutionHistoryJdbcRepository historyRepository = mock(JobExecutionHistoryJdbcRepository.class);
+        SftpServerProperties serverProperties = mock(SftpServerProperties.class);
+
+        when(context.getPropertiesForActiveCompany()).thenReturn(serverProperties);
+
+        ShortUrlExportCSVTasklet tasklet = new ShortUrlExportCSVTasklet(
+                dataSource, context, sftpService, historyRepository);
+        setField(tasklet, "exportDirectory", "/exports");
+        setField(tasklet, "batchSize", 1000);
+
+        Connection connection = mock(Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        ResultSet rs = mock(ResultSet.class);
+        when(dataSource.getConnection()).thenReturn(connection);
+        when(connection.prepareStatement(anyString(), anyInt(), anyInt())).thenReturn(statement);
+        when(statement.executeQuery()).thenReturn(rs);
+
+        when(rs.next()).thenReturn(true, false);
+        when(rs.getTimestamp("creation_date")).thenReturn(Timestamp.valueOf("2026-04-08 12:00:00"));
+        when(rs.getString("phone_number")).thenReturn("5551234567");
+        when(rs.getString("email")).thenReturn(null);
+        when(rs.getString("mobile_number")).thenReturn("5551234567");
+        when(rs.getString("api_key")).thenReturn("key-1");
+        when(rs.getString("short_url")).thenReturn("abc");
+        when(rs.getString("original_url")).thenReturn("https://example.com");
+        when(rs.getString("message_type")).thenReturn("sms");
+        when(rs.getInt("redirect_count")).thenReturn(2);
+        when(rs.getString("transaction_date")).thenReturn("2026-04-08");
+        when(rs.getString("transaction_id")).thenReturn("tx-002");
+        when(rs.getString("tcode")).thenReturn("t1");
+        when(rs.getString("company")).thenReturn("telmex");
+
+        StepContribution contribution = mock(StepContribution.class);
+        ChunkContext chunkContext = buildChunkContext(null, null, null, null);
+        RepeatStatus result = tasklet.execute(contribution, chunkContext);
+
+        assertThat(result).isEqualTo(RepeatStatus.FINISHED);
+        String previousDay = LocalDate.now(ZoneId.of("America/Mexico_City"))
+                .minusDays(1)
+                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        verify(sftpService).renameFileOnSftp(anyString(),
+                eq("/exports/shorturl_export_" + previousDay + ".csv"));
+        verify(contribution).incrementWriteCount(1L);
     }
 
     private static ChunkContext buildChunkContext(String date, String startDate, String endDate, String apiKey) {

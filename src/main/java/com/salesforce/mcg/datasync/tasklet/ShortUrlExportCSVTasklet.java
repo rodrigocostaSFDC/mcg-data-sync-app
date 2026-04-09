@@ -15,7 +15,10 @@
 
 package com.salesforce.mcg.datasync.tasklet;
 
+import com.salesforce.mcg.datasync.aspect.MexicoCityTimezone;
+import com.salesforce.mcg.datasync.aspect.TimezoneContext;
 import com.salesforce.mcg.datasync.common.AppConstants;
+import com.salesforce.mcg.datasync.helper.DateFormatterHelper;
 import com.salesforce.mcg.datasync.repository.impl.JobExecutionHistoryJdbcRepository;
 import com.salesforce.mcg.datasync.service.SftpService;
 import com.salesforce.mcg.datasync.util.SftpPropertyContext;
@@ -40,15 +43,12 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.Month;
-import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static com.salesforce.mcg.datasync.config.JobConfig.SHORT_URL_EXPORT_CSV_JOB;
 
 /**
  * Tasklet that exports Short URL records incrementally to a CSV file on SFTP.
@@ -58,13 +58,11 @@ import static com.salesforce.mcg.datasync.config.JobConfig.SHORT_URL_EXPORT_CSV_
  * ID_TRANSACCION_MC, TIPO_ENVIO, ID_TRANSACCION_DATE, CLICKS
  * </p>
  * <p>
- * Export Modes:
- * - Mode 1 (CREATED_ONLY): Export records created since last export (default)
- * - Mode 2 (CREATED_OR_UPDATED): Export records created OR updated since last export
- *   (controlled by EXPORT_UPDATES env var)
- * - Mode 3 (DATE_RANGE): Export records for a specific date/date range (CLI parameter)
- *   Date is specified in Mexico City timezone and converted to UTC for query
- * - Mode 4 (CAMPAIGN_DAY): Export records for a specific campaign (api_key) on a specific day
+ * Export Modes (all dates interpreted in America/Mexico_City timezone):
+ * - Default (PREVIOUS_DAY): Export records from yesterday (00:00 – 24:00 Mexico City time)
+ * - Mode 1 (DAILY): Export records for a specific day (--date)
+ * - Mode 2 (DATE_RANGE): Export records for a date range (--startDate + --endDate)
+ * - Mode 3 (CAMPAIGN_DAY): Export records for a specific campaign on a day (--apiKey + --date)
  *   Uses composite index on (api_key, creation_date) for performant filtering
  * </p>
  * <p>
@@ -80,11 +78,7 @@ import static com.salesforce.mcg.datasync.config.JobConfig.SHORT_URL_EXPORT_CSV_
 public class ShortUrlExportCSVTasklet implements Tasklet {
 
     private static final String DATE_PARAM_PATTERN = "yyyy-MM-dd";
-    private static final String DATETIME_PARAM_PATTERN = "yyyy-MM-dd HH:mm:ss";
     DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern(DATE_PARAM_PATTERN);
-    DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern(DATETIME_PARAM_PATTERN);
-
-    private static final ZoneId UTC_ZONE = ZoneId.of("UTC");
 
     private static final String FILE_PREFIX = "shorturl_export_";
     private static final String FILE_PREFIX_DATERANGE = "shorturl_daterange_";
@@ -161,6 +155,7 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
         this.jobHistRepository = jobHistRepository;
     }
 
+    @MexicoCityTimezone("Short URL CSV Export")
     @Override
     public RepeatStatus execute(
             @NonNull StepContribution contribution,
@@ -183,20 +178,9 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
         var exportDateEnd = jobParams.getString(EXPORT_DATE_END_PARAM);
         var exportApiKey = jobParams.getString(EXPORT_API_KEY_PARAM);
 
-        /* -- Last execution --*/
-        var lastExecutionDate = jobHistRepository
-                .findLastSuccessfulExecutionTime(SHORT_URL_EXPORT_CSV_JOB)
-                .orElseGet(() -> {
-                    log.info("⚠️ There is no job executions found. Assuming a default date");
-                    return LocalDateTime.of(
-                            2000,
-                            Month.JANUARY,
-                            1,
-                            0,
-                            0,
-                            0);
-                });
-        var lastExecution =  dateFormatter.format(lastExecutionDate);
+        /* -- Default export date (previous day in active timezone) -- */
+        var previousDay = TimezoneContext.today().minusDays(1);
+        var previousDayStr = dateFormatter.format(previousDay);
 
         try (Connection connection = dataSource.getConnection()) {
             connection.setAutoCommit(false);
@@ -230,17 +214,17 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
                             batchCount++;
 
                             if (batchCount % batchSize == 0) {
-                                log.info("ℹ️ Exported {} records so far... (last record timestamp: {})",
+                                log.info("ℹ️ Exported {} records so far... (last record timestamp MX: {})",
                                         recordCount.get(),
-                                        lastCreationDate != null ? lastCreationDate.toLocalDateTime() : "N/A");
+                                        lastCreationDate != null ? DateFormatterHelper.format(lastCreationDate) : "N/A");
                                 writer.flush();
                             }
                         }
 
                         writer.flush();
-                        log.info("🏁 Finished reading {} records from database. Last record timestamp: {}",
+                        log.info("🏁 Finished reading {} records from database. Last record timestamp MX: {}",
                                 recordCount.get(),
-                                lastCreationDate != null ? lastCreationDate.toLocalDateTime() : "N/A");
+                                lastCreationDate != null ? DateFormatterHelper.format(lastCreationDate) : "N/A");
 
                     } catch (Exception e) {
                         log.error("❌ Error writing CSV data. Error: {}", e.getMessage());
@@ -262,7 +246,7 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
                         exportDate,
                         exportDateStart,
                         exportDateEnd,
-                        lastExecution);
+                        previousDayStr);
                 //var finalFileName = resolveFinalFileName(lastRecordTimestamp.get(), tempFileName);
                 var finalFullPath = buildSftpPath(exportDirectory, finalFileName);
                 sftpService.renameFileOnSftp(tempFullPath, finalFullPath);
@@ -491,70 +475,46 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
             String exportDateEnd) throws Exception {
 
         PreparedStatement statement;
-        LocalDateTime dateStart;
-        LocalDateTime dateEnd;
+        ZonedDateTime startMx;
+        ZonedDateTime endMx;
 
         if (Strings.isNotBlank(exportDate)){
-            log.info("🚀 Exporting Mode: Daily");
+            log.info("🚀 Exporting Mode: Daily ({})", TimezoneContext.zone());
             LocalDate date = LocalDate.parse(exportDate, dateFormatter);
-            dateStart = date.atStartOfDay();
-            dateEnd = date.atTime(23,59,59);
-            statement = prepareForwardOnlyReadOnlyStatement(connection, SELECT_PREFIX_SQL + """ 
-                        WHERE
-                            (creation_date >= ? AND creation_date < ?)
-                        OR
-                            (last_accessed_date >= ? AND last_accessed_date < ?)
-                        ORDER BY creation_date DESC
-                        """);
-            statement.setTimestamp(1, Timestamp.valueOf(dateStart));
-            statement.setTimestamp(2, Timestamp.valueOf(dateEnd));
-            statement.setTimestamp(3, Timestamp.valueOf(dateStart));
-            statement.setTimestamp(4, Timestamp.valueOf(dateEnd));
+            startMx = TimezoneContext.startOfDay(date);
+            endMx = TimezoneContext.startOfNextDay(date);
 
         } else if (Strings.isNotBlank(exportDateStart)
                 && Strings.isNotBlank(exportDateEnd)){
-            log.info("🚀 Exporting Mode: Range");
-            dateStart = LocalDateTime.parse(exportDateStart + " 00:00:00", dateTimeFormatter);
-            dateEnd = LocalDateTime.parse(exportDateEnd + " 23:59:59", dateTimeFormatter);
-            statement = prepareForwardOnlyReadOnlyStatement(connection, SELECT_PREFIX_SQL + """ 
-                        WHERE
-                            (creation_date >= ? AND creation_date < ?)
-                        OR
-                            (last_accessed_date >= ? AND last_accessed_date < ?)
-                        ORDER BY creation_date DESC
-                        """);
-            statement.setTimestamp(1, Timestamp.valueOf(dateStart));
-            statement.setTimestamp(2, Timestamp.valueOf(dateEnd));
-            statement.setTimestamp(3, Timestamp.valueOf(dateStart));
-            statement.setTimestamp(4, Timestamp.valueOf(dateEnd));
+            log.info("🚀 Exporting Mode: Range ({})", TimezoneContext.zone());
+            LocalDate start = LocalDate.parse(exportDateStart, dateFormatter);
+            LocalDate end = LocalDate.parse(exportDateEnd, dateFormatter);
+            startMx = TimezoneContext.startOfDay(start);
+            endMx = TimezoneContext.startOfNextDay(end);
+
         } else {
-            log.info("🚀 Exporting Mode: Since Last Export");
-            dateStart = jobHistRepository
-                    .findLastSuccessfulExecutionTime(SHORT_URL_EXPORT_CSV_JOB)
-                    .orElseGet(() -> {
-                        log.info("⚠️ There is no job executions found. Assuming a default date");
-                        return LocalDateTime.of(
-                                2000,
-                                Month.JANUARY,
-                                1,
-                                0,
-                                0,
-                                0);
-                    });
-            log.info("");
-            statement = prepareForwardOnlyReadOnlyStatement(connection, SELECT_PREFIX_SQL + """ 
-                        WHERE
-                            (creation_date >= ? AND creation_date < ?)
-                        OR
-                            (last_accessed_date >= ? AND last_accessed_date < ?)
-                        ORDER BY creation_date DESC
-                        """);
-            dateEnd = LocalDateTime.now(UTC_ZONE);
-            statement.setTimestamp(1, Timestamp.valueOf(dateStart));
-            statement.setTimestamp(2, Timestamp.valueOf(dateEnd));
-            statement.setTimestamp(3, Timestamp.valueOf(dateStart));
-            statement.setTimestamp(4, Timestamp.valueOf(dateEnd));
+            log.info("🚀 Exporting Mode: Previous Day ({})", TimezoneContext.zone());
+            LocalDate yesterday = TimezoneContext.today().minusDays(1);
+            startMx = TimezoneContext.startOfDay(yesterday);
+            endMx = TimezoneContext.startOfNextDay(yesterday);
         }
+
+        log.info("ℹ️ Query window: {} → {} (Mexico City)", startMx, endMx);
+
+        statement = prepareForwardOnlyReadOnlyStatement(connection, SELECT_PREFIX_SQL + """
+                    WHERE
+                        (creation_date >= ? AND creation_date < ?)
+                    OR
+                        (last_accessed_date >= ? AND last_accessed_date < ?)
+                    ORDER BY creation_date DESC
+                    """);
+        Timestamp tsStart = Timestamp.from(startMx.toInstant());
+        Timestamp tsEnd = Timestamp.from(endMx.toInstant());
+        statement.setTimestamp(1, tsStart);
+        statement.setTimestamp(2, tsEnd);
+        statement.setTimestamp(3, tsStart);
+        statement.setTimestamp(4, tsEnd);
+
         return statement;
     }
 
