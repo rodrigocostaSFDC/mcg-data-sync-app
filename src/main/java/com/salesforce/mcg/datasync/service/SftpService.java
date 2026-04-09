@@ -25,6 +25,7 @@ import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.io.InputStream;
 import java.io.IOException;
 import java.io.PipedInputStream;
 import java.util.List;
@@ -52,24 +53,33 @@ public class SftpService {
      * @throws SftpException if an SFTP error occurs during listing
      */
     public List<String> listFiles(String remoteDir) throws SftpException, JSchException {
-        if (!session.isConnected()){
-            session.connect();
+        ChannelSftp sftp = null;
+        try {
+            if (!session.isConnected()) {
+                session.connect();
+            }
+            sftp = (ChannelSftp) session.openChannel(Sftp.Channel.SFTP);
+            sftp.connect();
+            @SuppressWarnings("unchecked")
+            Vector<ChannelSftp.LsEntry> files = sftp.ls(remoteDir);
+            return files.stream()
+                    .map(ChannelSftp.LsEntry::getFilename)
+                    .filter(f -> {
+                        String filename = f.toLowerCase();
+                        return filename.endsWith(File.Extensions.CSV) ||
+                               filename.endsWith(File.Extensions.TXT) ||
+                               filename.endsWith(File.Extensions.GZ) ||
+                               filename.endsWith(File.Extensions.DAT);
+                    })
+                    .toList();
+        } catch (SftpException | JSchException e) {
+            log.error("❌ Failed to list files in {}: {}", remoteDir, e.getMessage());
+            throw e;
+        } finally {
+            if (sftp != null && sftp.isConnected()) {
+                sftp.disconnect();
+            }
         }
-        ChannelSftp sftp = (ChannelSftp) session.openChannel(Sftp.Channel.SFTP);
-        sftp.connect();
-        /*uncheck*/
-        Vector<ChannelSftp.LsEntry> files = sftp.ls(remoteDir);
-        return files.stream()
-                .map(ChannelSftp.LsEntry::getFilename)
-                .filter(f -> {
-                    String filename = f.toLowerCase();
-                    return filename.endsWith(File.Extensions.CSV) ||
-                           filename.endsWith(File.Extensions.TXT) ||
-                           filename.endsWith(File.Extensions.GZ) ||
-                           filename.endsWith(File.Extensions.DAT);
-                })
-
-                .toList();
     }
 
     /**
@@ -101,15 +111,13 @@ public class SftpService {
     /**
      * Rename a file on SFTP using full remote paths.
      * <p>
-     * Using {@link ChannelSftp#rename(String, String)} with absolute paths avoids relying on the
-     * channel's current working directory matching where {@link #uploadStreamToSftp} wrote the file,
-     * which otherwise can cause SSH_FX_NO_SUCH_FILE after upload.
+     * Prefer {@link SftpChannel#rename} when upload and rename should share one channel.
      * </p>
      */
     public void renameFileOnSftp(String oldPath, String newPath) throws JSchException, SftpException {
         ChannelSftp channelSftp = null;
         try {
-            if (!session.isConnected()){
+            if (!session.isConnected()) {
                 session.connect();
             }
             channelSftp = (ChannelSftp) session.openChannel(Sftp.Channel.SFTP);
@@ -118,9 +126,10 @@ public class SftpService {
             String from = normalizeRemotePath(oldPath);
             String to = normalizeRemotePath(newPath);
             channelSftp.rename(from, to);
-
             log.info("✅ Renamed file on SFTP: {} ➡️ {}", from, to);
-
+        } catch (SftpException | JSchException e) {
+            log.error("❌ Failed to rename {} → {}: {}", oldPath, newPath, e.getMessage());
+            throw e;
         } finally {
             if (channelSftp != null && channelSftp.isConnected()) {
                 channelSftp.disconnect();
@@ -172,6 +181,9 @@ public class SftpService {
             log.info("📡 Starting streaming upload to: {}", normalizedPath);
             channelSftp.put(inputStream, normalizedPath);
             log.info("📡 File uploaded successfully to: {}", normalizedPath);
+        } catch (SftpException | JSchException e) {
+            log.error("❌ Failed to upload to {}: {}", remotePath, e.getMessage());
+            throw e;
         } finally {
             if (channelSftp != null && channelSftp.isConnected()) {
                 channelSftp.disconnect();
@@ -202,6 +214,78 @@ public class SftpService {
             p = p.substring(0, p.length() - 1);
         }
         return p;
+    }
+
+    /**
+     * Opens a single SFTP channel that stays open for multiple operations.
+     * Use with try-with-resources so the channel is closed automatically.
+     */
+    public SftpChannel openChannel() throws JSchException {
+        if (!session.isConnected()) {
+            session.connect();
+        }
+        ChannelSftp ch = (ChannelSftp) session.openChannel(Sftp.Channel.SFTP);
+        ch.connect();
+        return new SftpChannel(ch);
+    }
+
+    /**
+     * A single SFTP channel that can perform upload, rename, and delete
+     * without opening a new connection for each operation.
+     */
+    public static class SftpChannel implements AutoCloseable {
+
+        private final ChannelSftp channel;
+
+        SftpChannel(ChannelSftp channel) {
+            this.channel = channel;
+        }
+
+        public void upload(String remotePath, InputStream inputStream) throws SftpException {
+            String normalized = normalizeRemotePath(remotePath);
+            String directory = normalized.substring(0, normalized.lastIndexOf('/'));
+            ensureDirectory(directory);
+            log.info("📡 Starting streaming upload to: {}", normalized);
+            channel.put(inputStream, normalized);
+            log.info("📡 File uploaded successfully to: {}", normalized);
+        }
+
+        public void rename(String oldPath, String newPath) throws SftpException {
+            String from = normalizeRemotePath(oldPath);
+            String to = normalizeRemotePath(newPath);
+            channel.rename(from, to);
+            log.info("✅ Renamed file on SFTP: {} ➡️ {}", from, to);
+        }
+
+        public void delete(String filePath) {
+            try {
+                String normalized = normalizeRemotePath(filePath);
+                channel.rm(normalized);
+                log.info("🗑️ Deleted file: {}", normalized);
+            } catch (SftpException e) {
+                log.error("❌️ Could not delete file {}. Error: {}", filePath, e.getMessage());
+            }
+        }
+
+        private void ensureDirectory(String path) {
+            try {
+                channel.cd(path);
+            } catch (SftpException e) {
+                try {
+                    channel.mkdir(path);
+                    log.info("✅ Directory created: {}", path);
+                } catch (SftpException ex) {
+                    log.warn("❌ Could not create directory {}: {}", path, ex.getMessage());
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            if (channel.isConnected()) {
+                channel.disconnect();
+            }
+        }
     }
 
 }

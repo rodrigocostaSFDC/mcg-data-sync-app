@@ -1,7 +1,6 @@
 package com.salesforce.mcg.datasync.tasklet;
 
 import com.salesforce.mcg.datasync.aspect.TimezoneContext;
-import com.salesforce.mcg.datasync.properties.SftpServerProperties;
 import com.salesforce.mcg.datasync.repository.impl.JobExecutionHistoryJdbcRepository;
 import com.salesforce.mcg.datasync.service.SftpService;
 import com.salesforce.mcg.datasync.util.SftpPropertyContext;
@@ -17,7 +16,7 @@ import org.springframework.batch.core.scope.context.StepContext;
 import org.springframework.batch.repeat.RepeatStatus;
 
 import javax.sql.DataSource;
-import java.io.PipedInputStream;
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.sql.Connection;
@@ -59,10 +58,10 @@ class ShortUrlExportCSVTaskletTest {
         DataSource dataSource = mock(DataSource.class);
         SftpPropertyContext context = mock(SftpPropertyContext.class);
         SftpService sftpService = mock(SftpService.class);
+        SftpService.SftpChannel sftpChannel = mock(SftpService.SftpChannel.class);
         JobExecutionHistoryJdbcRepository historyRepository = mock(JobExecutionHistoryJdbcRepository.class);
-        SftpServerProperties serverProperties = mock(SftpServerProperties.class);
 
-        when(context.getPropertiesForActiveCompany()).thenReturn(serverProperties);
+        when(sftpService.openChannel()).thenReturn(sftpChannel);
 
         ShortUrlExportCSVTasklet tasklet = new ShortUrlExportCSVTasklet(
                 dataSource, context, sftpService, historyRepository);
@@ -96,8 +95,8 @@ class ShortUrlExportCSVTaskletTest {
         RepeatStatus result = tasklet.execute(contribution, chunkContext);
 
         assertThat(result).isEqualTo(RepeatStatus.FINISHED);
-        verify(sftpService).uploadStreamToSftp(anyString(), any(PipedInputStream.class), eq(serverProperties));
-        verify(sftpService).renameFileOnSftp(anyString(), eq("/exports/shorturl_campaign_campaign-A_20260401.csv"));
+        verify(sftpChannel).upload(anyString(), any(InputStream.class));
+        verify(sftpChannel).rename(anyString(), eq("/exports/shorturl_campaign_campaign-A_20260401.csv"));
         verify(contribution).incrementWriteCount(1L);
     }
 
@@ -106,11 +105,10 @@ class ShortUrlExportCSVTaskletTest {
         DataSource dataSource = mock(DataSource.class);
         SftpPropertyContext context = mock(SftpPropertyContext.class);
         SftpService sftpService = mock(SftpService.class);
+        SftpService.SftpChannel sftpChannel = mock(SftpService.SftpChannel.class);
         JobExecutionHistoryJdbcRepository historyRepository = mock(JobExecutionHistoryJdbcRepository.class);
-        SftpServerProperties serverProperties = mock(SftpServerProperties.class);
 
-        when(context.getPropertiesForActiveCompany()).thenReturn(serverProperties);
-        when(historyRepository.findLastSuccessfulExecutionTime(anyString())).thenReturn(Optional.empty());
+        when(sftpService.openChannel()).thenReturn(sftpChannel);
 
         ShortUrlExportCSVTasklet tasklet = new ShortUrlExportCSVTasklet(
                 dataSource, context, sftpService, historyRepository);
@@ -130,8 +128,8 @@ class ShortUrlExportCSVTaskletTest {
         RepeatStatus result = tasklet.execute(contribution, chunkContext);
 
         assertThat(result).isEqualTo(RepeatStatus.FINISHED);
-        verify(sftpService).deleteFile(anyString());
-        verify(sftpService, never()).renameFileOnSftp(anyString(), anyString());
+        verify(sftpChannel).delete(anyString());
+        verify(sftpChannel, never()).rename(anyString(), anyString());
         verify(contribution, never()).incrementWriteCount(anyLong());
     }
 
@@ -192,10 +190,10 @@ class ShortUrlExportCSVTaskletTest {
         DataSource dataSource = mock(DataSource.class);
         SftpPropertyContext context = mock(SftpPropertyContext.class);
         SftpService sftpService = mock(SftpService.class);
+        SftpService.SftpChannel sftpChannel = mock(SftpService.SftpChannel.class);
         JobExecutionHistoryJdbcRepository historyRepository = mock(JobExecutionHistoryJdbcRepository.class);
-        SftpServerProperties serverProperties = mock(SftpServerProperties.class);
 
-        when(context.getPropertiesForActiveCompany()).thenReturn(serverProperties);
+        when(sftpService.openChannel()).thenReturn(sftpChannel);
 
         ShortUrlExportCSVTasklet tasklet = new ShortUrlExportCSVTasklet(
                 dataSource, context, sftpService, historyRepository);
@@ -232,7 +230,7 @@ class ShortUrlExportCSVTaskletTest {
         String previousDay = LocalDate.now(ZoneId.of("America/Mexico_City"))
                 .minusDays(1)
                 .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-        verify(sftpService).renameFileOnSftp(anyString(),
+        verify(sftpChannel).rename(anyString(),
                 eq("/exports/shorturl_export_" + previousDay + ".csv"));
         verify(contribution).incrementWriteCount(1L);
     }

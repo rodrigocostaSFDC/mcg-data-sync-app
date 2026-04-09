@@ -193,7 +193,8 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
 
             try (ResultSet rs = statement.executeQuery();
                  PipedOutputStream pipedOut = new PipedOutputStream();
-                 PipedInputStream pipedIn = new PipedInputStream(pipedOut, 1024 * 1024)) {
+                 PipedInputStream pipedIn = new PipedInputStream(pipedOut, 1024 * 1024);
+                 SftpService.SftpChannel sftp = sftpService.openChannel()) {
 
                 Thread writerThread = new Thread(() -> {
                     try (PrintWriter writer = new PrintWriter(
@@ -233,12 +234,12 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
                 }, "csv-writer-thread");
 
                 writerThread.start();
-                sftpService.uploadStreamToSftp(tempFullPath, pipedIn, context.getPropertiesForActiveCompany());
+                sftp.upload(tempFullPath, pipedIn);
                 writerThread.join();
 
                 if (recordCount.get() == 0) {
                     log.warn("⚠️ No new records found since last export");
-                    sftpService.deleteFile(tempFullPath);
+                    sftp.delete(tempFullPath);
                     return RepeatStatus.FINISHED;
                 }
                 var finalFileName = resolveFinalFileName(
@@ -247,9 +248,15 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
                         exportDateStart,
                         exportDateEnd,
                         previousDayStr);
-                //var finalFileName = resolveFinalFileName(lastRecordTimestamp.get(), tempFileName);
                 var finalFullPath = buildSftpPath(exportDirectory, finalFileName);
-                sftpService.renameFileOnSftp(tempFullPath, finalFullPath);
+                try {
+                    sftp.rename(tempFullPath, finalFullPath);
+                } catch (Exception renameEx) {
+                    log.error("❌ Failed to rename temp file {} → {}. Cleaning up temp file.",
+                            tempFullPath, finalFullPath);
+                    sftp.delete(tempFullPath);
+                    throw renameEx;
+                }
                 long duration = System.currentTimeMillis() - startTime;
                 log.info("🏁 Successfully exported {} records to SFTP: {} (took {} ms, {} records/sec)",
                         recordCount.get(), finalFullPath, duration,
