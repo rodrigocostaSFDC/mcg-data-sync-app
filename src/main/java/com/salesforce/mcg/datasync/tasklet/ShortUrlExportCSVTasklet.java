@@ -321,7 +321,7 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
         var company = rs.getString("company");
 
         String idTransaccionMc = Objects.requireNonNullElse(transactionId, Strings.EMPTY);
-        String idTransaccionFec = extractFirst14Digits(transactionDate);
+        String idTransaccionFec = extractTransactionDate(transactionDate);
 
         return String.join(AppConstants.Strings.COMMA,
                 asText(mobileNumber),
@@ -382,24 +382,25 @@ public class ShortUrlExportCSVTasklet implements Tasklet {
     }
 
     /**
-     * Legacy format: 14 digits then dash and suffix (e.g. {@code 12345678901234-xyz}) → first 14 digits.
+     * Extracts the full 17-digit transaction date (YYYYMMDDHHmmssSSS) including milliseconds.
+     * Legacy format: 17 digits then dash and suffix (e.g. {@code 20260407123456789-xyz}) → first 17 digits.
      * ISO dates (e.g. {@code 2026-04-07}) have '-' earlier; return the full trimmed value.
-     * Undelimited strings longer than 14 characters → first 14 characters.
+     * Undelimited strings longer than 17 characters → first 17 characters.
      */
-    private String extractFirst14Digits(String transactionDate) {
+    private String extractTransactionDate(String transactionDate) {
         if (transactionDate == null || transactionDate.isEmpty()) {
             return Strings.EMPTY;
         }
         String trimmed = transactionDate.trim();
         int dashIndex = trimmed.indexOf('-');
-        if (dashIndex == 14 && trimmed.length() >= 14) {
-            String prefix = trimmed.substring(0, 14);
+        if (dashIndex == 17 && trimmed.length() >= 17) {
+            String prefix = trimmed.substring(0, 17);
             if (prefix.chars().allMatch(Character::isDigit)) {
                 return prefix;
             }
         }
-        if (dashIndex < 0 && trimmed.length() > 14) {
-            return trimmed.substring(0, 14);
+        if (dashIndex < 0 && trimmed.length() > 17) {
+            return trimmed.substring(0, 17);
         }
         return trimmed;
     }

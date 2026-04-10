@@ -146,13 +146,14 @@ class ShortUrlExportCSVTaskletTest {
         assertThat(extractTipoEnvio.invoke(tasklet, "sms")).isEqualTo("S");
         assertThat(extractTipoEnvio.invoke(tasklet, "")).isEqualTo("");
 
-        Method extractFirst14Digits = ShortUrlExportCSVTasklet.class.getDeclaredMethod("extractFirst14Digits", String.class);
-        extractFirst14Digits.setAccessible(true);
-        assertThat(extractFirst14Digits.invoke(tasklet, "12345678901234-abc")).isEqualTo("12345678901234");
-        assertThat(extractFirst14Digits.invoke(tasklet, "2026-04-07")).isEqualTo("2026-04-07");
-        assertThat(extractFirst14Digits.invoke(tasklet, "2026-04-07 12:30:45")).isEqualTo("2026-04-07 12:30:45");
-        assertThat(extractFirst14Digits.invoke(tasklet, "1234")).isEqualTo("1234");
-        assertThat(extractFirst14Digits.invoke(tasklet, (Object) null)).isEqualTo("");
+        Method extractTransactionDate = ShortUrlExportCSVTasklet.class.getDeclaredMethod("extractTransactionDate", String.class);
+        extractTransactionDate.setAccessible(true);
+        assertThat(extractTransactionDate.invoke(tasklet, "12345678901234567-abc")).isEqualTo("12345678901234567");
+        assertThat(extractTransactionDate.invoke(tasklet, "12345678901234-abc")).isEqualTo("12345678901234-abc");
+        assertThat(extractTransactionDate.invoke(tasklet, "2026-04-07")).isEqualTo("2026-04-07");
+        assertThat(extractTransactionDate.invoke(tasklet, "2026-04-07 12:30:45")).isEqualTo("2026-04-07 12:30:45");
+        assertThat(extractTransactionDate.invoke(tasklet, "1234")).isEqualTo("1234");
+        assertThat(extractTransactionDate.invoke(tasklet, (Object) null)).isEqualTo("");
 
         Method asText = ShortUrlExportCSVTasklet.class.getDeclaredMethod("asText", String.class);
         asText.setAccessible(true);
