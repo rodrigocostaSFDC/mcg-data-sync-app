@@ -35,3 +35,11 @@ build/
 .vscode/
 .env
 /logs/
+
+### Secrets / auto-generated keys ###
+**/hostkey.ser
+*.pem
+*.key
+*.p12
+*.jks
+**/application-local.properties
