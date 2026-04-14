@@ -3,7 +3,9 @@
 HELP.md
 target/
 .sfdx/
-.mvn/wrapper/maven-wrapper.jar
+mvnw
+mvnw.cmd
+.mvn/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
