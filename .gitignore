@@ -36,6 +36,9 @@ build/
 .env
 /logs/
 
+### SFTP local data ###
+sftp/
+
 ### Secrets / auto-generated keys ###
 **/hostkey.ser
 *.pem
